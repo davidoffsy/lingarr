@@ -1,4 +1,4 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using Lingarr.Contracts.Interfaces;
 using Lingarr.Contracts.Models;
 using Lingarr.Core.Configuration;
@@ -8,6 +8,7 @@ using Lingarr.Core.Interfaces;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
+using Lingarr.Server.Services.Media;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lingarr.Server.Services;
@@ -18,6 +19,8 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     private readonly ILogger<IMediaSubtitleProcessor> _logger;
     private readonly ISubtitleService _subtitleService;
     private readonly ISettingService _settingService;
+    private readonly IMediaFileLocator _mediaFileLocator;
+    private readonly IEmbeddedSubtitleService _embeddedSubtitleService;
     private readonly LingarrDbContext _dbContext;
     private string _hash = string.Empty;
     private IMedia _media = null!;
@@ -28,11 +31,15 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         ILogger<IMediaSubtitleProcessor> logger,
         ISettingService settingService,
         ISubtitleService subtitleService,
+        IMediaFileLocator mediaFileLocator,
+        IEmbeddedSubtitleService embeddedSubtitleService,
         LingarrDbContext dbContext)
     {
         _translationRequestService = translationRequestService;
         _settingService = settingService;
         _subtitleService = subtitleService;
+        _mediaFileLocator = mediaFileLocator;
+        _embeddedSubtitleService = embeddedSubtitleService;
         _dbContext = dbContext;
         _logger = logger;
     }
@@ -51,6 +58,8 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         }
         
         var subtitles = await _subtitleService.GetSubtitles(media.Path, media.FileName);
+        var mkvPath = await TryCollectEmbeddedSubtitles(media, subtitles);
+
         if (!subtitles.Any())
         {
             return false;
@@ -69,7 +78,47 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         }
         
         _logger.LogInformation("Initiating subtitle processing.");
-        return await ProcessSubtitles(subtitles, sourceLanguages, targetLanguages, ignoreCaptions);
+        return await ProcessSubtitles(subtitles, sourceLanguages, targetLanguages, ignoreCaptions, mkvPath);
+    }
+
+    /// <summary>
+    /// When scanning is enabled, probes this media's MKV and appends text tracks that
+    /// do not already have a matching sidecar (same language + caption).
+    /// </summary>
+    private async Task<string?> TryCollectEmbeddedSubtitles(IMedia media, List<Subtitles> subtitles)
+    {
+        var scanEmbedded = await _settingService.GetSetting(SettingKeys.Translation.ScanEmbeddedSubtitles) == "true";
+        if (!scanEmbedded)
+        {
+            return null;
+        }
+
+        var mkvPath = _mediaFileLocator.FindMkv(media);
+        if (mkvPath == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var tracks = await _embeddedSubtitleService.ProbeAsync(mkvPath);
+            var merged = EmbeddedSubtitleMerger.Merge(subtitles, tracks, mkvPath);
+            subtitles.Clear();
+            subtitles.AddRange(merged);
+            return mkvPath;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to probe embedded subtitles for {FileName}; continuing with sidecars only.",
+                media.FileName);
+            return mkvPath;
+        }
     }
 
     /// <summary>
@@ -79,12 +128,14 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     /// <param name="sourceLanguages">The source languages.</param>
     /// <param name="targetLanguages">The target languages.</param>
     /// <param name="ignoreCaptions">The ignore captions setting.</param>
+    /// <param name="mkvPath">MKV path when embedded tracks were probed; otherwise null.</param>
     /// <returns>True if new translation requests were created, false otherwise.</returns>
     private async Task<bool> ProcessSubtitles(
         List<Subtitles> subtitles,
         HashSet<string> sourceLanguages,
         HashSet<string> targetLanguages,
-        string ignoreCaptions)
+        string ignoreCaptions,
+        string? mkvPath)
     {
         if (sourceLanguages.Count == 0 || targetLanguages.Count == 0)
         {
@@ -152,6 +203,11 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
             return false;
         }
 
+        if (!await EnsureSidecarSource(selected.Subtitle, mkvPath))
+        {
+            return false;
+        }
+
         foreach (var targetLanguage in languagesToTranslate)
         {
             await _translationRequestService.CreateRequest(new TranslateAbleSubtitle
@@ -175,7 +231,47 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     }
 
     /// <summary>
+    /// Copies an embedded source track to a real sidecar before enqueueing translation.
+    /// TranslationJob only reads sidecar paths. Extract failure does not persist the hash
+    /// so the next run can retry.
+    /// </summary>
+    private async Task<bool> EnsureSidecarSource(Subtitles subtitle, string? mkvPath)
+    {
+        if (!subtitle.IsEmbedded)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrEmpty(mkvPath))
+        {
+            _logger.LogWarning(
+                "Cannot extract embedded subtitle for {FileName}: MKV path is missing.",
+                _media.FileName);
+            return false;
+        }
+
+        var extractedPath = await _embeddedSubtitleService.ExtractAsync(
+            mkvPath,
+            EmbeddedSubtitleMerger.ToTrack(subtitle));
+        if (string.IsNullOrEmpty(extractedPath))
+        {
+            _logger.LogWarning(
+                "Failed to extract embedded subtitle stream {Index} from {MkvPath}; skipping translation.",
+                subtitle.TrackIndex,
+                mkvPath);
+            return false;
+        }
+
+        subtitle.Path = extractedPath;
+        subtitle.FileName = Path.GetFileNameWithoutExtension(extractedPath);
+        subtitle.IsEmbedded = false;
+        return true;
+    }
+
+    /// <summary>
     /// Creates a hash of the current subtitle file state.
+    /// Embedded tracks are identified by index + codec + language so extracting a sidecar
+    /// does not churn the hash into an infinite re-queue.
     /// </summary>
     /// <param name="subtitles">List of subtitle file paths to include in the hash.</param>
     /// <param name="sourceLanguages">The source languages.</param>
@@ -189,14 +285,14 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         string ignoreCaptions)
     {
         using var sha256 = SHA256.Create();
-        var subtitlePaths = string.Join("|", subtitles.Select(subtitle => subtitle.Path)
-            .ToList()
-            .OrderBy(f => f));
+        var subtitleKeys = string.Join("|", subtitles
+            .Select(EmbeddedSubtitleMerger.Identity)
+            .OrderBy(key => key));
         
         var sourceLangs = string.Join(",", sourceLanguages.OrderBy(l => l));
         var targetLangs = string.Join(",", targetLanguages.OrderBy(l => l));
         
-        var hashInput = $"{subtitlePaths}|{sourceLangs}|{targetLangs}|{ignoreCaptions}";
+        var hashInput = $"{subtitleKeys}|{sourceLangs}|{targetLangs}|{ignoreCaptions}";
         var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(hashInput));
         return Convert.ToBase64String(hashBytes);
     }

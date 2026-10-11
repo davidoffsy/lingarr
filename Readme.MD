@@ -1,4 +1,4 @@
-﻿# Lingarr: Subtitle Translation Made Easy
+# Lingarr: Subtitle Translation Made Easy
 
 [![Version](https://img.shields.io/github/v/release/lingarr-translate/lingarr)](https://github.com/lingarr-translate/lingarr/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/lingarr/lingarr.svg)](https://hub.docker.com/r/lingarr/lingarr)
@@ -159,6 +159,10 @@ These variables can be used
 | `DB_USERNAME=Lingarr`                             | The username for the database (required when using `mysql` or `postgresql`).            |
 | `DB_PASSWORD=Secret1234`                          | The password for the database (required when using `mysql` or `postgresql`).            |
 | `DB_HANGFIRE_SQLITE_PATH=/app/config/Hangfire.db` | The path of the sqlite database file for Hangfire, when sqlite connection is used       |
+| `FFMPEG_PATH`                                     | Optional path to the `ffmpeg` binary. Defaults to `ffmpeg` on `PATH`.                   |
+| `FFPROBE_PATH`                                    | Optional path to the `ffprobe` binary. Defaults to `ffprobe` on `PATH`.                 |
+
+The Lingarr Docker image bundles **FFmpeg** (including `ffprobe`) so it can inspect and extract text subtitle tracks from MKV files. That makes the image larger than a plain ASP.NET runtime. Mount the same media folders that contain the **video files** (not only sidecar subtitles), and make sure the container user can read them. Missing binaries are skipped; existing sidecar translation still works.
 
 Additional [settings](Settings.MD) can be found here that can be set as environment variables to persist settings for each reinstall
 

@@ -1,4 +1,4 @@
-﻿namespace Lingarr.Core.Configuration;
+namespace Lingarr.Core.Configuration;
 
 public static class SettingKeys
 {
@@ -101,6 +101,8 @@ public static class SettingKeys
         public const string RemoveLanguageTag = "remove_language_tag";
         public const string SubtitleTag = "subtitle_tag";
         public const string IgnoreCaptions = "ignore_captions";
+        public const string ScanEmbeddedSubtitles = "scan_embedded_subtitles";
+        public const string ExtractEmbeddedSource = "extract_embedded_source";
         public const string RequestTimeout = "request_timeout";
         public const string MaxRetries = "max_retries";
         public const string RetryDelay = "retry_delay";

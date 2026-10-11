@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Hangfire;
@@ -25,6 +25,7 @@ using Lingarr.Server.Services.Integration;
 using Lingarr.Server.Services.Plugins;
 using Lingarr.Server.Services.Plugins.Manifests;
 using Lingarr.Server.Services.Subtitle;
+using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Sync;
 using Lingarr.Server.Services.Translation;
 using Lingarr.Migrations;
@@ -168,8 +169,11 @@ public static class ServiceCollectionExtensions
         builder.Services.AddScoped<ITranslationRequestService, TranslationRequestService>();
         builder.Services.AddScoped<ITranslationRequestEventService, TranslationRequestEventService>();
         builder.Services.AddScoped<IMediaSubtitleProcessor, MediaSubtitleProcessor>();
+        builder.Services.AddScoped<IMediaFileLocator, MediaFileLocator>();
+        builder.Services.AddScoped<IEmbeddedSubtitleService, EmbeddedSubtitleService>();
         builder.Services.AddScoped<IDirectoryService, DirectoryService>();
         builder.Services.AddScoped<IMappingService, MappingService>();
+        builder.Services.AddSingleton<IExternalProcessRunner, ExternalProcessRunner>();
 
         // Register subtitle services
         builder.Services.AddScoped<ISubtitleParser, SrtParser>();

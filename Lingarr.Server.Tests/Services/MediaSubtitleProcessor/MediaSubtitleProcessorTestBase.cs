@@ -24,6 +24,8 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
     protected readonly Mock<ILogger<IMediaSubtitleProcessor>> LoggerMock;
     protected readonly Mock<ISubtitleService> SubtitleServiceMock;
     protected readonly Mock<ISettingService> SettingServiceMock;
+    protected readonly Mock<IMediaFileLocator> MediaFileLocatorMock;
+    protected readonly Mock<IEmbeddedSubtitleService> EmbeddedSubtitleServiceMock;
     protected readonly LingarrDbContext DbContext;
     protected readonly Lingarr.Server.Services.MediaSubtitleProcessor Processor;
 
@@ -33,6 +35,8 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
         LoggerMock = new Mock<ILogger<IMediaSubtitleProcessor>>();
         SubtitleServiceMock = new Mock<ISubtitleService>();
         SettingServiceMock = new Mock<ISettingService>();
+        MediaFileLocatorMock = new Mock<IMediaFileLocator>();
+        EmbeddedSubtitleServiceMock = new Mock<IEmbeddedSubtitleService>();
 
         var options = new DbContextOptionsBuilder<LingarrDbContext>()
             .UseInMemoryDatabase(databaseName: System.Guid.NewGuid().ToString())
@@ -73,6 +77,8 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
             LoggerMock.Object,
             SettingServiceMock.Object,
             SubtitleServiceMock.Object,
+            MediaFileLocatorMock.Object,
+            EmbeddedSubtitleServiceMock.Object,
             DbContext);
     }
 

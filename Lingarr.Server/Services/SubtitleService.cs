@@ -89,13 +89,7 @@ public class SubtitleService : ISubtitleService
     /// <inheritdoc />
     public async Task<List<SubtitleItem>> ReadSubtitles(string filePath)
     {
-        var extension = Path.GetExtension(filePath).ToLower();
-        ISubtitleParser parser = extension switch
-        {
-            ".srt" => new SrtParser(),
-            ".ssa" or ".ass" => new SsaParser(),
-            _ => throw new NotSupportedException($"Subtitle format {extension} is not supported")
-        };
+        var parser = CreateParser(Path.GetExtension(filePath));
 
         await using var fileStream = File.OpenRead(filePath);
         return parser.ParseStream(fileStream, Encoding.UTF8);
@@ -221,7 +215,7 @@ public class SubtitleService : ISubtitleService
         try
         {
             using var stream = File.OpenRead(filePath);
-            return ValidateSubtitleStream(stream, Encoding.UTF8, options);
+            return ValidateSubtitleStream(stream, Encoding.UTF8, options, Path.GetExtension(filePath));
         }
         catch (Exception ex)
         {
@@ -233,7 +227,8 @@ public class SubtitleService : ISubtitleService
     private bool ValidateSubtitleStream(
         Stream subtitleStream,
         Encoding encoding,
-        SubtitleValidationOptions options)
+        SubtitleValidationOptions options,
+        string extension)
     {
         try
         {
@@ -252,7 +247,17 @@ public class SubtitleService : ISubtitleService
             // Reset stream position to the beginning before parsing
             subtitleStream.Seek(0, SeekOrigin.Begin);
 
-            var parser = new SrtParser();
+            ISubtitleParser parser;
+            try
+            {
+                parser = CreateParser(extension);
+            }
+            catch (NotSupportedException)
+            {
+                _logger.LogWarning("Cannot validate unsupported subtitle format {Extension}", extension);
+                return false;
+            }
+
             var subtitles = parser.ParseStream(subtitleStream, encoding);
 
             if (subtitles.Count < 2)
@@ -456,6 +461,14 @@ public class SubtitleService : ISubtitleService
             AvailableLanguages = availableLanguages
         };
     }
+
+    private static ISubtitleParser CreateParser(string extension) =>
+        extension.ToLowerInvariant() switch
+        {
+            ".srt" => new SrtParser(),
+            ".ssa" or ".ass" => new SsaParser(),
+            _ => throw new NotSupportedException($"Subtitle format {extension} is not supported")
+        };
 
     /// <summary>
     /// Tries to match the specified <paramref name="part"/> against any known culture/language

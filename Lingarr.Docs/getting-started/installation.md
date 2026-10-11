@@ -114,6 +114,14 @@ docker run -d \
   ghcr.io/lingarr-translate/lingarr:latest # or use: lingarr/lingarr:latest
 ```
 
+## FFmpeg
+
+The Lingarr image installs FFmpeg (including `ffprobe`) so it can inspect and extract text subtitle tracks from MKV files. This increases the image size compared to a plain ASP.NET runtime.
+
+When you enable **Scan embedded MKV subtitles** in Settings → Subtitle, mount the folders that contain the **video files** themselves (the same `/movies` and `/tv` volumes as Radarr/Sonarr), and ensure the container user can read those files. Sidecar translation does not require FFmpeg; if the binaries are missing, Lingarr logs a warning and skips embedded tracks.
+
+Local development outside Docker can install FFmpeg on the host, or point `FFMPEG_PATH` / `FFPROBE_PATH` at custom binaries.
+
 ## Running as non-root
 
 When running Docker containers, you can optionally specify which user should run the container process using the `user` flag. This is useful for:

@@ -193,6 +193,8 @@ public class TranslateControllerContentTests : IDisposable
             mediaServiceMock.Object,
             _settingServiceMock.Object,
             new Mock<ISubtitleService>().Object,
+            new Mock<IMediaFileLocator>().Object,
+            new Mock<IEmbeddedSubtitleService>().Object,
             new Mock<ITranslationRequestEventService>().Object,
             NullLogger<TranslationRequestService>.Instance);
 

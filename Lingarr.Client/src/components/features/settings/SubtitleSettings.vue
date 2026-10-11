@@ -1,12 +1,39 @@
-﻿<template>
+<template>
     <CardComponent title="Subtitle">
         <template #description>
-            Configure how subtitles are cleaned, and timed to prevent overlaps and remove unwanted
-            formatting.
+            Configure how subtitles are scanned, cleaned, and timed. Embedded MKV text tracks can
+            be extracted as sidecars next to the video for Plex / Emby.
         </template>
         <template #content>
             <div class="flex flex-col space-y-4">
                 <SaveNotification ref="saveNotification" />
+                <div class="flex flex-col space-x-2">
+                    <span class="font-semibold">Scan embedded MKV subtitles:</span>
+                    When enabled, automatic and bulk translation will probe this media's MKV for text
+                    subtitle tracks (SRT / ASS / SSA). Image tracks such as PGS are skipped. Movie
+                    and show lists are not probed. Default is off so existing libraries stay
+                    unchanged.
+                </div>
+                <ToggleButton v-model="scanEmbeddedSubtitles">
+                    <span class="text-primary-content text-sm font-medium">
+                        {{ scanEmbeddedSubtitles == 'true' ? 'Enabled' : 'Disabled' }}
+                    </span>
+                </ToggleButton>
+
+                <div class="flex flex-col space-x-2">
+                    <span class="font-semibold">Extract embedded source:</span>
+                    Write the selected source track as a sidecar next to the video so Plex / Emby
+                    can switch languages. Translation of embedded tracks always extracts this file
+                    first. Results use
+                    <code class="text-sm">{{ '{video}.{language}[.caption].srt|ass' }}</code>
+                    in the same folder as the video.
+                </div>
+                <ToggleButton v-model="extractEmbeddedSource">
+                    <span class="text-primary-content text-sm font-medium">
+                        {{ extractEmbeddedSource == 'true' ? 'Enabled' : 'Disabled' }}
+                    </span>
+                </ToggleButton>
+
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">
                         Skip translation if subtitles with caption tags exist:
@@ -113,6 +140,24 @@ const saveNotification = ref<InstanceType<typeof SaveNotification> | null>(null)
 const settingsStore = useSettingStore()
 const isValid = reactive({
     subtitleTag: true
+})
+
+const scanEmbeddedSubtitles = computed({
+    get: (): string =>
+        (settingsStore.getSetting(SETTINGS.SCAN_EMBEDDED_SUBTITLES) as string) ?? 'false',
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.SCAN_EMBEDDED_SUBTITLES, newValue, true)
+        saveNotification.value?.show()
+    }
+})
+
+const extractEmbeddedSource = computed({
+    get: (): string =>
+        (settingsStore.getSetting(SETTINGS.EXTRACT_EMBEDDED_SOURCE) as string) ?? 'true',
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.EXTRACT_EMBEDDED_SOURCE, newValue, true)
+        saveNotification.value?.show()
+    }
 })
 
 const ignoreCaptions = computed({

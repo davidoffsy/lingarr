@@ -11,6 +11,8 @@ Lingarr is primarily configured through its web interface. However, every settin
 | `MAX_CONCURRENT_JOBS=1` | Sets the amount of jobs that can run concurrently, defaults to 1. |
 | `JOB_TIMEOUT_MINUTES=30` | Minutes of silence before Hangfire retries a job. `sqlite` only, defaults to `30`. |
 | `TZ=Europe/Amsterdam` | The time zone Lingarr runs in, defaults to UTC. It applies to schedules, log timestamps and every date shown in the web interface, so set it to your own zone. A schedule of `0 3 * * *` runs at 3am in this zone. |
+| `FFMPEG_PATH` | Optional path to the `ffmpeg` binary. Defaults to `ffmpeg` on `PATH`. The Docker image already includes FFmpeg. |
+| `FFPROBE_PATH` | Optional path to the `ffprobe` binary. Defaults to `ffprobe` on `PATH`. The Docker image already includes ffprobe. |
 
 ## Database
 
@@ -82,6 +84,8 @@ This is a random value generated once on first submission and stored locally as 
 | `SOURCE_LANGUAGES` | A minified JSON array of source languages for translation. |
 | `TARGET_LANGUAGES` | A minified JSON array of target languages for translation. |
 | `USE_BATCH_TRANSLATION` | Set to `true` to translate subtitles in batches with AI services, defaults to false. |
+| `SCAN_EMBEDDED_SUBTITLES` | Set to `true` to probe MKV text tracks (SRT / ASS / SSA) during automatic and bulk translation. Movie and show lists are never probed. Defaults to false. |
+| `EXTRACT_EMBEDDED_SOURCE` | Set to `true` to write the selected source track as a sidecar next to the video so Plex / Emby can switch languages. Defaults to true. Translation of embedded tracks always extracts this file first. |
 
 The `SOURCE_LANGUAGES` and `TARGET_LANGUAGES` variables should be provided as a minified JSON array. Each object in the array should contain the `name` and [ISO 639](https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes) or [ISO 639-2](https://en.wikipedia.org/wiki/ISO_639-2) language codes:
 

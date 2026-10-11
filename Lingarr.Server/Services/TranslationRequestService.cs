@@ -1,4 +1,4 @@
-﻿using DeepL;
+using DeepL;
 using Hangfire;
 using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Models;
@@ -16,6 +16,7 @@ using Lingarr.Server.Models.Api;
 using Lingarr.Server.Models.Batch.Response;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Models.TranslationRequests;
+using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Subtitle;
 using Lingarr.Server.Services.Translation;
 using System.Collections.Concurrent;
@@ -35,6 +36,8 @@ public class TranslationRequestService : ITranslationRequestService
     private readonly IMediaService _mediaService;
     private readonly ISettingService _settingService;
     private readonly ISubtitleService _subtitleService;
+    private readonly IMediaFileLocator _mediaFileLocator;
+    private readonly IEmbeddedSubtitleService _embeddedSubtitleService;
     private readonly ITranslationRequestEventService _eventService;
     private readonly ILogger<TranslationRequestService> _logger;
     private const string ManualService = "manual";
@@ -50,6 +53,8 @@ public class TranslationRequestService : ITranslationRequestService
         IMediaService mediaService,
         ISettingService settingService,
         ISubtitleService subtitleService,
+        IMediaFileLocator mediaFileLocator,
+        IEmbeddedSubtitleService embeddedSubtitleService,
         ITranslationRequestEventService eventService,
         ILogger<TranslationRequestService> logger)
     {
@@ -62,6 +67,8 @@ public class TranslationRequestService : ITranslationRequestService
         _mediaService = mediaService;
         _settingService = settingService;
         _subtitleService = subtitleService;
+        _mediaFileLocator = mediaFileLocator;
+        _embeddedSubtitleService = embeddedSubtitleService;
         _eventService = eventService;
         _logger = logger;
     }
@@ -277,7 +284,7 @@ public class TranslationRequestService : ITranslationRequestService
             return;
         }
 
-        var subtitles = await _subtitleService.GetSubtitles(path, fileName);
+        var subtitles = await CollectSubtitles(path, fileName);
         var selected = _subtitleService.SelectSourceSubtitle(subtitles, sourceCodes, ignoreCaptions);
         if (selected == null)
         {
@@ -294,6 +301,12 @@ public class TranslationRequestService : ITranslationRequestService
             return;
         }
 
+        if (!await EnsureSidecarSource(selected.Subtitle, path, fileName))
+        {
+            _logger.LogDebug("Bulk: skipping mediaId {MediaId} — failed to extract embedded source subtitle", mediaId);
+            return;
+        }
+
         await CreateRequest(new TranslateAbleSubtitle
         {
             MediaId = mediaId,
@@ -303,6 +316,63 @@ public class TranslationRequestService : ITranslationRequestService
             SourceLanguage = selected.SourceLanguage,
             SubtitleFormat = selected.Subtitle.Format
         });
+    }
+
+    private async Task<List<Subtitles>> CollectSubtitles(string path, string fileName)
+    {
+        var subtitles = await _subtitleService.GetSubtitles(path, fileName);
+        if (await _settingService.GetSetting(SettingKeys.Translation.ScanEmbeddedSubtitles) != "true")
+        {
+            return subtitles;
+        }
+
+        var mkvPath = _mediaFileLocator.FindMkv(path, fileName);
+        if (mkvPath == null)
+        {
+            return subtitles;
+        }
+
+        try
+        {
+            var tracks = await _embeddedSubtitleService.ProbeAsync(mkvPath);
+            return EmbeddedSubtitleMerger.Merge(subtitles, tracks, mkvPath);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Bulk: failed to probe embedded subtitles at {Path}; using sidecars only.", mkvPath);
+            return subtitles;
+        }
+    }
+
+    private async Task<bool> EnsureSidecarSource(Subtitles subtitle, string path, string fileName)
+    {
+        if (!subtitle.IsEmbedded)
+        {
+            return true;
+        }
+
+        var mkvPath = _mediaFileLocator.FindMkv(path, fileName);
+        if (mkvPath == null)
+        {
+            return false;
+        }
+
+        var extractedPath = await _embeddedSubtitleService.ExtractAsync(
+            mkvPath,
+            EmbeddedSubtitleMerger.ToTrack(subtitle));
+        if (string.IsNullOrEmpty(extractedPath))
+        {
+            return false;
+        }
+
+        subtitle.Path = extractedPath;
+        subtitle.FileName = Path.GetFileNameWithoutExtension(extractedPath);
+        subtitle.IsEmbedded = false;
+        return true;
     }
 
     /// <inheritdoc />

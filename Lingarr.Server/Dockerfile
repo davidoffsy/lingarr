@@ -15,6 +15,10 @@ RUN npm run build
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 ARG TARGETARCH
 WORKDIR /app
+# FFmpeg (including ffprobe) is used to inspect and extract text subtitle tracks from MKV files.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Step 3: Build the server
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
