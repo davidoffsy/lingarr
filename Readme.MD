@@ -1,9 +1,11 @@
-# Lingarr: Subtitle Translation Made Easy
+# Lingarr (MKV fork): Subtitle Translation Made Easy
 
-[![Version](https://img.shields.io/github/v/release/lingarr-translate/lingarr)](https://github.com/lingarr-translate/lingarr/releases)
-[![Docker Pulls](https://img.shields.io/docker/pulls/lingarr/lingarr.svg)](https://hub.docker.com/r/lingarr/lingarr)
+[![Version](https://img.shields.io/github/v/release/davidoffsy/lingarr-support-mkv)](https://github.com/davidoffsy/lingarr-support-mkv/releases)
+[![GHCR](https://img.shields.io/badge/ghcr-davidoffsy%2Flingarr--support--mkv-blue)](https://github.com/davidoffsy/lingarr-support-mkv/pkgs/container/lingarr-support-mkv)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
 [![Discord](https://img.shields.io/discord/1293119073739210885?label=discord&logo=discord)](https://discord.gg/HkubmH2rcR)
+
+This is a community fork of [lingarr-translate/lingarr](https://github.com/lingarr-translate/lingarr) with **MKV embedded text-subtitle extraction and translation**.
 
 Lingarr is an application that leverages translation technologies to automatically translate subtitle files to your desired target language. 
 With support for multiple translation services including LibreTranslate, DeepL, and various AI providers, Lingarr offers a flexible solution for all your subtitle translation needs.
@@ -42,14 +44,15 @@ Lingarr provides multi-architecture Docker images that automatically select the 
 
 **Note:** As of 1.0.3 all images support both AMD64 (Intel/AMD) and ARM64 (Raspberry Pi, Apple Silicon) architectures. Docker will automatically pull the correct architecture for your system.
 
-### Available Registries
+### Available Registry
 
-Lingarr Docker images are available from multiple registries:
+This fork publishes multi-arch images to GitHub Container Registry only:
 
 | Registry | Image |
 |----------|-------|
-| GitHub Container Registry | `ghcr.io/lingarr-translate/lingarr:latest` |
-| Docker Hub | `docker.io/lingarr/lingarr:latest` |
+| GitHub Container Registry | `ghcr.io/davidoffsy/lingarr-support-mkv:latest` |
+
+Until a GitHub Release is published, use the `main` tag (`ghcr.io/davidoffsy/lingarr-support-mkv:main`).
 
 ## Setting up Lingarr
 
@@ -59,7 +62,7 @@ By default, Lingarr uses `MySQL` however, `PostgreSQL` and `SQLite` are also sup
 ```yaml
 services:
   lingarr:
-    image: ghcr.io/lingarr-translate/lingarr:latest # or lingarr/lingarr:latest
+    image: ghcr.io/davidoffsy/lingarr-support-mkv:main
     container_name: lingarr
     restart: unless-stopped
     environment:
@@ -141,7 +144,7 @@ docker run -d \
   -v /path/to/media/tv:/tv \
   -v /path/to/config:/app/config \
   --network lingarr \
-  ghcr.io/lingarr-translate/lingarr:latest # or use: lingarr/lingarr:latest
+  ghcr.io/davidoffsy/lingarr-support-mkv:main
 ```
 
 ### Lingarr environment variables
@@ -239,6 +242,7 @@ feature requests, or code contributions, please feel free to help out.
 Please read our [Contributing Guidelines](CONTRIBUTING.md) for development setup, coding standards, and requirements for submit pull requests.
 
 ### 🙏 Credits:
+Upstream: [lingarr-translate/lingarr](https://github.com/lingarr-translate/lingarr)  
 Icons: [Lucide](https://lucide.dev/icons)  
 Subtitle Parsing: [AlexPoint](https://github.com/AlexPoint/SubtitlesParser)    
 Translation Services: [libretranslate](https://libretranslate.com)  

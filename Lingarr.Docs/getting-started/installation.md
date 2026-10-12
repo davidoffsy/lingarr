@@ -1,5 +1,7 @@
 # Installation
 
+This page documents the [davidoffsy/lingarr-support-mkv](https://github.com/davidoffsy/lingarr-support-mkv) fork of Lingarr, which adds MKV embedded text-subtitle extraction.
+
 Lingarr runs as a Docker container. This page covers the available images and how to set up Lingarr with Docker Compose or the Docker CLI.
 
 ## Docker images
@@ -14,12 +16,13 @@ Lingarr provides multi-architecture Docker images that automatically select the 
 
 Note: As of 1.0.3 all images support both AMD64 (Intel/AMD) and ARM64 (Raspberry Pi, Apple Silicon) architectures. Docker will automatically pull the correct architecture for your system.
 
-Lingarr Docker images are available from multiple registries:
+This fork publishes multi-arch images to GitHub Container Registry only:
 
 | Registry | Image |
 |----------|-------|
-| GitHub Container Registry | `ghcr.io/lingarr-translate/lingarr:latest` |
-| Docker Hub | `docker.io/lingarr/lingarr:latest` |
+| GitHub Container Registry | `ghcr.io/davidoffsy/lingarr-support-mkv:latest` |
+
+Until a GitHub Release is published, use the `main` tag (`ghcr.io/davidoffsy/lingarr-support-mkv:main`).
 
 ## Docker Compose
 
@@ -28,7 +31,7 @@ By default, Lingarr uses `MySQL`, however, `PostgreSQL` and `SQLite` are also su
 ```yaml
 services:
   lingarr:
-    image: ghcr.io/lingarr-translate/lingarr:latest # or lingarr/lingarr:latest
+    image: ghcr.io/davidoffsy/lingarr-support-mkv:main
     container_name: lingarr
     restart: unless-stopped
     environment:
@@ -111,7 +114,7 @@ docker run -d \
   -v /path/to/media/tv:/tv \
   -v /path/to/config:/app/config \
   --network lingarr \
-  ghcr.io/lingarr-translate/lingarr:latest # or use: lingarr/lingarr:latest
+  ghcr.io/davidoffsy/lingarr-support-mkv:main
 ```
 
 ## FFmpeg
