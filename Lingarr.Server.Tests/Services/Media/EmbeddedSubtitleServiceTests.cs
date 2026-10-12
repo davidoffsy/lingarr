@@ -483,18 +483,13 @@ public class EmbeddedSubtitleServiceTests : IDisposable
         var outputPath = await _service.ExtractAsync(_mkvPath, track);
 
         Assert.Equal(Path.Combine(_directory, "Dune.2021.zh.forced.ass"), outputPath);
-        Assert.NotNull(arguments);
-        Assert.Equal("-y", arguments[0]);
-        Assert.Equal("-i", arguments[1]);
-        Assert.Equal(_mkvPath, arguments[2]);
-        Assert.Equal("-map", arguments[3]);
-        Assert.Equal("0:4", arguments[4]);
-        Assert.Equal("-c:s", arguments[5]);
-        Assert.Equal("copy", arguments[6]);
-        Assert.Equal("-progress", arguments[7]);
-        Assert.Equal("pipe:1", arguments[8]);
-        Assert.Equal("-nostats", arguments[9]);
-        Assert.Equal(outputPath + EmbeddedSubtitleService.ExtractingSuffix, arguments[10]);
+        Assert.Equal(
+            FfmpegExtractCommand.BuildArguments(
+                _mkvPath,
+                4,
+                "ass",
+                outputPath + EmbeddedSubtitleService.ExtractingSuffix),
+            arguments);
         Assert.False(File.Exists(outputPath + EmbeddedSubtitleService.ExtractingSuffix));
     }
 

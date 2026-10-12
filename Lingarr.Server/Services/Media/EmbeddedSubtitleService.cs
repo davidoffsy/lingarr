@@ -16,11 +16,6 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(30);
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> ExtractGates = new(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly HashSet<string> ExtractableExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".srt", ".ass", ".ssa"
-    };
-
     private static readonly HashSet<string> ImageSubtitleCodecs = new(StringComparer.OrdinalIgnoreCase)
     {
         "hdmv_pgs_subtitle",
@@ -123,7 +118,7 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
                 "ffprobe exited {ExitCode} while listing subtitle tracks in {Path}: {Error}",
                 result.ExitCode,
                 mkvPath,
-                Truncate(result.StandardError));
+                ProcessOutputTruncator.Tail(result.StandardError));
             return EmbeddedSubtitleProbeResult.NotFound(EmbeddedSubtitleProbeResult.ReasonProbeFailed);
         }
 
@@ -169,7 +164,7 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
             return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.MissingMkv);
         }
 
-        if (track.Index < 0 || !ExtractableExtensions.Contains(track.Extension))
+        if (track.Index < 0 || !FfmpegExtractCommand.TryGetMuxer(track.Extension, out _))
         {
             _logger.LogWarning(
                 "Refusing to extract subtitle stream {Index} ({Codec}) from {Path}.",
@@ -232,19 +227,15 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
 
         progress?.Report(new FfmpegExtractProgress(0, false));
 
+        if (!FfmpegExtractCommand.TryGetMuxer(track.Extension, out var muxer))
+        {
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.UnsupportedTrack);
+        }
+
         var tempPath = outputPath + ExtractingSuffix;
         TryDeleteIncomplete(tempPath);
 
-        var arguments = new[]
-        {
-            "-y",
-            "-i", mkvPath,
-            "-map", $"0:{track.Index}",
-            "-c:s", "copy",
-            "-progress", "pipe:1",
-            "-nostats",
-            tempPath
-        };
+        var arguments = FfmpegExtractCommand.BuildArguments(mkvPath, track.Index, muxer, tempPath);
 
         var resolvedTimeout = timeout ?? await GetExtractTimeoutAsync();
         var lastPercent = 0;
@@ -327,7 +318,7 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
                 result.ExitCode,
                 track.Index,
                 mkvPath,
-                Truncate(result.StandardError));
+                ProcessOutputTruncator.Tail(result.StandardError));
             return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.FfmpegFailed);
         }
 
@@ -653,17 +644,6 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
         }
 
         return null;
-    }
-
-    private static string Truncate(string? value, int maxLength = 500)
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return string.Empty;
-        }
-
-        var trimmed = value.Trim();
-        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
     }
 
     private sealed class FfprobeOutput
