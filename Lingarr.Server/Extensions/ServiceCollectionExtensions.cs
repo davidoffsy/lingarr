@@ -339,9 +339,7 @@ public static class ServiceCollectionExtensions
     private static void ConfigureSqLiteStorage(IGlobalConfiguration configuration)
     {
         var sqliteDbPath = Environment.GetEnvironmentVariable("DB_HANGFIRE_SQLITE_PATH") ?? "/app/config/Hangfire.db";
-        var jobTimeoutMinutes = int.TryParse(Environment.GetEnvironmentVariable("JOB_TIMEOUT_MINUTES"), out var timeout) && timeout > 0
-            ? timeout
-            : 30;
+        var jobTimeoutMinutes = HangfireJobTimeout.GetStorageMinutes();
         using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={sqliteDbPath}"))
         {
             // add Write-Ahead Logging

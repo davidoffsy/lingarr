@@ -1,4 +1,4 @@
-﻿using Lingarr.Core.Configuration;
+using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
 using Lingarr.Core.Entities;
 using Lingarr.Server.Services.Plugins;
@@ -230,6 +230,7 @@ public class StartupService : IHostedService
 
             { "SERVICE_TYPE", SettingKeys.Translation.ServiceType },
             { "USE_BATCH_TRANSLATION", SettingKeys.Translation.UseBatchTranslation },
+            { "EXTRACT_TIMEOUT_MINUTES", SettingKeys.Translation.ExtractTimeoutMinutes },
             { "LIBRE_TRANSLATE_URL", SettingKeys.Translation.LibreTranslate.Url },
             { "LIBRE_TRANSLATE_API_KEY", SettingKeys.Translation.LibreTranslate.ApiKey },
             { "AI_PROMPT", SettingKeys.Translation.AiPrompt },

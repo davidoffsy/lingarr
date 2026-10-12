@@ -34,6 +34,18 @@
                     </span>
                 </ToggleButton>
 
+                <InputComponent
+                    v-model="extractTimeoutMinutes"
+                    :validation-type="INPUT_VALIDATION_TYPE.NUMBER"
+                    label="Embedded extract timeout (minutes):"
+                    @update:validation="(val) => (isValid.extractTimeoutMinutes = val)">
+                    <p class="text-primary-content/60 text-xs">
+                        ffmpeg may read the entire video when extracting a track. Cloud / rclone
+                        mounts are often slow. Default is 60 for on-demand extract (the MKV
+                        button). Automatic / bulk extract stays at 2 minutes.
+                    </p>
+                </InputComponent>
+
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">
                         Skip translation if subtitles with caption tags exist:
@@ -139,7 +151,8 @@ import InputComponent from '@/components/common/InputComponent.vue'
 const saveNotification = ref<InstanceType<typeof SaveNotification> | null>(null)
 const settingsStore = useSettingStore()
 const isValid = reactive({
-    subtitleTag: true
+    subtitleTag: true,
+    extractTimeoutMinutes: true
 })
 
 const scanEmbeddedSubtitles = computed({
@@ -157,6 +170,24 @@ const extractEmbeddedSource = computed({
     set: (newValue: string): void => {
         settingsStore.updateSetting(SETTINGS.EXTRACT_EMBEDDED_SOURCE, newValue, true)
         saveNotification.value?.show()
+    }
+})
+
+const extractTimeoutMinutes = computed({
+    get: (): string =>
+        (settingsStore.getSetting(SETTINGS.EXTRACT_TIMEOUT_MINUTES) as string) ?? '60',
+    set: (newValue: string): void => {
+        const parsed = Number.parseInt(newValue, 10)
+        const clamped =
+            Number.isFinite(parsed) && parsed > 0 ? String(Math.min(Math.max(parsed, 1), 1440)) : newValue
+        settingsStore.updateSetting(
+            SETTINGS.EXTRACT_TIMEOUT_MINUTES,
+            clamped,
+            isValid.extractTimeoutMinutes
+        )
+        if (isValid.extractTimeoutMinutes) {
+            saveNotification.value?.show()
+        }
     }
 })
 

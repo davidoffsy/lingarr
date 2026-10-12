@@ -3,6 +3,9 @@ import {
     ILanguage,
     ISettings,
     ISubtitle,
+    IProbeEmbeddedResponse,
+    IExtractAndTranslateRequest,
+    IExtractAndTranslateResponse,
     ITranslationRequest,
     MediaType,
     IPathMapping,
@@ -89,6 +92,14 @@ export interface ISettingService {
 
 export interface ISubtitleService {
     collect<T>(path: string): Promise<T>
+    probe(
+        mediaId: number,
+        mediaType: MediaType,
+        signal?: AbortSignal
+    ): Promise<IProbeEmbeddedResponse>
+    extractAndTranslate(
+        request: IExtractAndTranslateRequest
+    ): Promise<IExtractAndTranslateResponse>
 }
 
 export interface IVersionService {

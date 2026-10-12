@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -105,6 +106,37 @@ public class ExternalProcessRunnerTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             _runner.RunAsync("/bin/sleep", ["5"], TimeSpan.FromSeconds(10), cts.Token));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_InvokesCallbackForEachStdoutLine()
+    {
+        SkipIfMissing("/bin/echo");
+        var lines = new List<string>();
+
+        var result = await _runner.RunStreamingAsync(
+            "/bin/echo",
+            ["hello"],
+            TimeSpan.FromSeconds(5),
+            line => lines.Add(line));
+
+        Assert.True(result.Succeeded);
+        Assert.Contains(lines, line => line.Contains("hello"));
+    }
+
+    [Fact]
+    public async Task RunStreamingAsync_DoesNotInterpretArgumentsThroughAShell()
+    {
+        SkipIfMissing("/bin/echo");
+
+        var result = await _runner.RunStreamingAsync(
+            "/bin/echo",
+            ["hello world", ";", "echo", "pwned"],
+            TimeSpan.FromSeconds(5),
+            onStandardOutputLine: null);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("hello world ; echo pwned", result.StandardOutput.Trim());
     }
 
     [Fact]

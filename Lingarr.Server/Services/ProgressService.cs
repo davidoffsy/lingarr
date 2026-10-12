@@ -24,7 +24,11 @@ public class ProgressService : IProgressService
     }
 
     /// <inheritdoc />
-    public async Task Emit(TranslationRequest translationRequest, int progress)
+    public Task Emit(TranslationRequest translationRequest, int progress)
+        => Emit(translationRequest, progress, null);
+
+    /// <inheritdoc />
+    public async Task Emit(TranslationRequest translationRequest, int progress, string? phase)
     {
         await _hubContext.Clients.Group("TranslationRequests").SendAsync("RequestProgress", new
         {
@@ -34,7 +38,8 @@ public class ProgressService : IProgressService
             translationRequest.ErrorMessage,
             translationRequest.StackTrace,
             Status = translationRequest.Status.GetDisplayName(),
-            Progress = progress
+            Progress = progress,
+            Phase = phase
         });
     }
 

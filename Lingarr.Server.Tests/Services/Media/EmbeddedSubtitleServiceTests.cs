@@ -20,6 +20,7 @@ public class EmbeddedSubtitleServiceTests : IDisposable
     private readonly string _directory;
     private readonly string _mkvPath;
     private readonly Mock<IExternalProcessRunner> _processRunner = new();
+    private readonly Mock<ISettingService> _settings = new();
     private readonly EmbeddedSubtitleService _service;
 
     public EmbeddedSubtitleServiceTests()
@@ -29,9 +30,14 @@ public class EmbeddedSubtitleServiceTests : IDisposable
         _mkvPath = Path.Combine(_directory, "Dune.2021.mkv");
         File.WriteAllBytes(_mkvPath, [0x1]);
 
+        _settings
+            .Setup(service => service.GetSetting(It.IsAny<string>()))
+            .ReturnsAsync((string?)null);
+
         _service = new EmbeddedSubtitleService(
             _processRunner.Object,
             new LanguageCodeService(),
+            _settings.Object,
             NullLogger<EmbeddedSubtitleService>.Instance);
     }
 
@@ -189,6 +195,18 @@ public class EmbeddedSubtitleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ProbeDetailedAsync_MissingFfprobe_ReturnsNoFfprobeReason()
+    {
+        SetupProbe(ExternalProcessResult.NotFound("ffprobe"));
+
+        var result = await _service.ProbeDetailedAsync(_mkvPath);
+
+        Assert.False(result.Found);
+        Assert.Equal(EmbeddedSubtitleProbeResult.ReasonNoFfprobe, result.Reason);
+        Assert.Empty(result.Tracks);
+    }
+
+    [Fact]
     public async Task ProbeAsync_Timeout_ReturnsEmpty()
     {
         SetupProbe(new ExternalProcessResult
@@ -202,6 +220,54 @@ public class EmbeddedSubtitleServiceTests : IDisposable
         var tracks = await _service.ProbeAsync(_mkvPath);
 
         Assert.Empty(tracks);
+    }
+
+    [Fact]
+    public async Task ProbeDetailedAsync_Timeout_ReturnsTimeoutReason()
+    {
+        SetupProbe(new ExternalProcessResult
+        {
+            FileName = "ffprobe",
+            ExecutableFound = true,
+            TimedOut = true,
+            ExitCode = -1
+        });
+
+        var result = await _service.ProbeDetailedAsync(_mkvPath);
+
+        Assert.False(result.Found);
+        Assert.Equal(EmbeddedSubtitleProbeResult.ReasonTimeout, result.Reason);
+        Assert.Empty(result.Tracks);
+    }
+
+    [Fact]
+    public async Task ProbeDetailedAsync_PutsPgsInSkipped()
+    {
+        SetupProbe(Succeed("""
+            {
+              "streams": [
+                {
+                  "index": 2,
+                  "codec_name": "subrip",
+                  "tags": { "language": "eng" }
+                },
+                {
+                  "index": 4,
+                  "codec_name": "hdmv_pgs_subtitle",
+                  "tags": { "language": "eng" }
+                }
+              ]
+            }
+            """));
+
+        var result = await _service.ProbeDetailedAsync(_mkvPath);
+
+        Assert.True(result.Found);
+        Assert.Equal("en", Assert.Single(result.Tracks).Language);
+        var skipped = Assert.Single(result.Skipped);
+        Assert.Equal(4, skipped.Index);
+        Assert.Equal("hdmv_pgs_subtitle", skipped.CodecName);
+        Assert.Equal(EmbeddedSubtitleProbeResult.SkipReasonImage, skipped.Reason);
     }
 
     [Fact]
@@ -244,7 +310,7 @@ public class EmbeddedSubtitleServiceTests : IDisposable
         Assert.Equal("s", arguments[3]);
         Assert.Equal("-show_entries", arguments[4]);
         Assert.Equal(
-            "stream=index,codec_name:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired",
+            "format=duration:stream=index,codec_name:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired",
             arguments[5]);
         Assert.Equal("-of", arguments[6]);
         Assert.Equal("json", arguments[7]);
@@ -297,6 +363,14 @@ public class EmbeddedSubtitleServiceTests : IDisposable
                 It.IsAny<TimeSpan>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
+        _processRunner.Verify(
+            runner => runner.RunStreamingAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -330,16 +404,53 @@ public class EmbeddedSubtitleServiceTests : IDisposable
         };
 
         _processRunner
-            .Setup(runner => runner.RunAsync(
+            .Setup(runner => runner.RunStreamingAsync(
                 It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(ExternalProcessResult.NotFound("ffmpeg"));
 
         var outputPath = await _service.ExtractAsync(_mkvPath, track);
 
         Assert.Null(outputPath);
+
+        var detailed = await _service.ExtractDetailedAsync(_mkvPath, track);
+        Assert.Equal(EmbeddedSubtitleExtractResult.MissingFfmpeg, detailed.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ExtractAsync_Cancellation_DeletesIncompleteSidecar()
+    {
+        var track = new EmbeddedSubtitleTrack
+        {
+            Index = 2,
+            CodecName = "subrip",
+            Language = "en",
+            Extension = ".srt"
+        };
+        var sidecar = Path.Combine(_directory, "Dune.2021.en.srt");
+
+        _processRunner
+            .Setup(runner => runner.RunStreamingAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, IReadOnlyList<string>, TimeSpan, Action<string>, CancellationToken>(
+                (_, arguments, _, _, token) =>
+                {
+                    File.WriteAllText(arguments[^1], "partial sidecar");
+                    throw new OperationCanceledException(token);
+                });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => _service.ExtractAsync(_mkvPath, track, new CancellationToken(canceled: true)));
+
+        Assert.False(File.Exists(sidecar));
+        Assert.False(File.Exists(sidecar + EmbeddedSubtitleService.ExtractingSuffix));
     }
 
     [Fact]
@@ -356,12 +467,13 @@ public class EmbeddedSubtitleServiceTests : IDisposable
         };
 
         _processRunner
-            .Setup(runner => runner.RunAsync(
+            .Setup(runner => runner.RunStreamingAsync(
                 It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<string, IReadOnlyList<string>, TimeSpan, CancellationToken>((_, args, _, _) =>
+            .Callback<string, IReadOnlyList<string>, TimeSpan, Action<string>, CancellationToken>((_, args, _, _, _) =>
             {
                 arguments = args;
                 File.WriteAllText(args[^1], "[Script Info]\n");
@@ -379,7 +491,216 @@ public class EmbeddedSubtitleServiceTests : IDisposable
         Assert.Equal("0:4", arguments[4]);
         Assert.Equal("-c:s", arguments[5]);
         Assert.Equal("copy", arguments[6]);
-        Assert.Equal(outputPath, arguments[7]);
+        Assert.Equal("-progress", arguments[7]);
+        Assert.Equal("pipe:1", arguments[8]);
+        Assert.Equal("-nostats", arguments[9]);
+        Assert.Equal(outputPath + EmbeddedSubtitleService.ExtractingSuffix, arguments[10]);
+        Assert.False(File.Exists(outputPath + EmbeddedSubtitleService.ExtractingSuffix));
+    }
+
+    [Fact]
+    public async Task ProbeDetailedAsync_ParsesFormatDuration()
+    {
+        SetupProbe(Succeed("""
+            {
+              "streams": [
+                {
+                  "index": 2,
+                  "codec_name": "subrip",
+                  "tags": { "language": "eng" }
+                }
+              ],
+              "format": { "duration": "3600.5" }
+            }
+            """));
+
+        var result = await _service.ProbeDetailedAsync(_mkvPath);
+
+        Assert.True(result.Found);
+        Assert.Equal(3600.5, result.DurationSeconds);
+    }
+
+    [Fact]
+    public async Task ExtractDetailedAsync_Timeout_ReturnsTimeoutErrorAndDeletesSidecar()
+    {
+        var track = new EmbeddedSubtitleTrack
+        {
+            Index = 2,
+            CodecName = "subrip",
+            Language = "en",
+            Extension = ".srt"
+        };
+        var sidecar = Path.Combine(_directory, "Dune.2021.en.srt");
+
+        _processRunner
+            .Setup(runner => runner.RunStreamingAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, IReadOnlyList<string> arguments, TimeSpan _, Action<string> _, CancellationToken _) =>
+            {
+                File.WriteAllText(arguments[^1], "partial");
+                return new ExternalProcessResult
+                {
+                    FileName = "ffmpeg",
+                    ExecutableFound = true,
+                    TimedOut = true,
+                    ExitCode = -1
+                };
+            });
+
+        var result = await _service.ExtractDetailedAsync(_mkvPath, track);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(EmbeddedSubtitleExtractResult.TimedOut(TimeSpan.FromMinutes(60)), result.ErrorMessage);
+        Assert.False(File.Exists(sidecar));
+    }
+
+    [Fact]
+    public async Task ExtractDetailedAsync_UsesConfiguredTimeout()
+    {
+        var track = new EmbeddedSubtitleTrack
+        {
+            Index = 2,
+            CodecName = "subrip",
+            Language = "en",
+            Extension = ".srt"
+        };
+        TimeSpan? timeout = null;
+        _settings
+            .Setup(service => service.GetSetting(It.IsAny<string>()))
+            .ReturnsAsync("90");
+
+        _processRunner
+            .Setup(runner => runner.RunStreamingAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, IReadOnlyList<string>, TimeSpan, Action<string>, CancellationToken>(
+                (_, args, captured, _, _) =>
+                {
+                    timeout = captured;
+                    File.WriteAllText(args[^1], "1\n");
+                })
+            .ReturnsAsync(Succeed(string.Empty));
+
+        await _service.ExtractDetailedAsync(_mkvPath, track);
+
+        Assert.Equal(TimeSpan.FromMinutes(90), timeout);
+    }
+
+    [Fact]
+    public async Task ExtractAsync_UsesAutomaticTimeout()
+    {
+        var track = new EmbeddedSubtitleTrack
+        {
+            Index = 2,
+            CodecName = "subrip",
+            Language = "en",
+            Extension = ".srt"
+        };
+        TimeSpan? timeout = null;
+
+        _processRunner
+            .Setup(runner => runner.RunStreamingAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, IReadOnlyList<string>, TimeSpan, Action<string>, CancellationToken>(
+                (_, args, captured, _, _) =>
+                {
+                    timeout = captured;
+                    File.WriteAllText(args[^1], "1\n");
+                })
+            .ReturnsAsync(Succeed(string.Empty));
+
+        await _service.ExtractAsync(_mkvPath, track);
+
+        Assert.Equal(ExtractTimeout.ResolveAutomatic(), timeout);
+    }
+
+    [Fact]
+    public async Task ExtractDetailedAsync_ReportsProgressFromOutTime()
+    {
+        var track = new EmbeddedSubtitleTrack
+        {
+            Index = 2,
+            CodecName = "subrip",
+            Language = "en",
+            Extension = ".srt"
+        };
+        var reports = new List<FfmpegExtractProgress>();
+        var progress = new CollectingProgress(reports);
+
+        _processRunner
+            .Setup(runner => runner.RunStreamingAsync(
+                It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((
+                string _,
+                IReadOnlyList<string> arguments,
+                TimeSpan _,
+                Action<string> onLine,
+                CancellationToken _) =>
+            {
+                File.WriteAllText(arguments[^1], "1\n");
+                onLine("out_time_us=5000000");
+                onLine("progress=continue");
+                onLine("out_time_us=10000000");
+                onLine("progress=end");
+                return Succeed(string.Empty);
+            });
+
+        var result = await _service.ExtractDetailedAsync(
+            _mkvPath,
+            track,
+            CancellationToken.None,
+            progress,
+            durationSeconds: 10);
+
+        Assert.True(result.Succeeded);
+        Assert.Contains(reports, report => report.Percent == 50);
+        Assert.Contains(reports, report => report.Percent == 100 && report.Ended);
+    }
+
+    [Fact]
+    public async Task ExtractDetailedAsync_EmptyOutput_ReturnsErrorMessage()
+    {
+        var track = new EmbeddedSubtitleTrack
+        {
+            Index = 2,
+            CodecName = "subrip",
+            Language = "en",
+            Extension = ".srt"
+        };
+
+        SetupExtract(writeOutput: true, outputContent: string.Empty);
+
+        var result = await _service.ExtractDetailedAsync(_mkvPath, track);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(EmbeddedSubtitleExtractResult.EmptyOutput, result.ErrorMessage);
+    }
+
+    private sealed class CollectingProgress : IProgress<FfmpegExtractProgress>
+    {
+        private readonly List<FfmpegExtractProgress> _reports;
+
+        public CollectingProgress(List<FfmpegExtractProgress> reports)
+        {
+            _reports = reports;
+        }
+
+        public void Report(FfmpegExtractProgress value) => _reports.Add(value);
     }
 
     private void SetupProbe(ExternalProcessResult result)
@@ -396,12 +717,18 @@ public class EmbeddedSubtitleServiceTests : IDisposable
     private void SetupExtract(bool writeOutput, string outputContent)
     {
         _processRunner
-            .Setup(runner => runner.RunAsync(
+            .Setup(runner => runner.RunStreamingAsync(
                 It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<TimeSpan>(),
+                It.IsAny<Action<string>>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string fileName, IReadOnlyList<string> arguments, TimeSpan _, CancellationToken _) =>
+            .ReturnsAsync((
+                string fileName,
+                IReadOnlyList<string> arguments,
+                TimeSpan _,
+                Action<string> _,
+                CancellationToken _) =>
             {
                 if (writeOutput)
                 {

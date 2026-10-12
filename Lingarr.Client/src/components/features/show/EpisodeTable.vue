@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <div class="w-full bg-tertiary text-tertiary-content">
         <div class="border-primary hidden grid-cols-12 border-b-2 font-bold md:grid">
             <div class="col-span-1 px-4 py-2">
@@ -24,7 +24,7 @@
                 <ActiveTranslationBadge :media-id="episode.id" :media-type="MEDIA_TYPE.EPISODE" />
             </div>
             <div class="flex w-full items-center justify-between md:col-span-5 md:w-auto md:pr-4">
-                <div v-if="episode?.fileName" class="flex flex-wrap items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                     <ContextMenu
                         v-for="(subtitle, jndex) in getSubtitle(episode.fileName)"
                         :key="`${episode.id}-${jndex}`"
@@ -38,6 +38,13 @@
                             </span>
                         </BadgeComponent>
                     </ContextMenu>
+                    <button
+                        type="button"
+                        title="提取内嵌字幕"
+                        class="inline-flex cursor-pointer items-center"
+                        @click.stop="openExtractModal(episode)">
+                        <BadgeComponent>MKV</BadgeComponent>
+                    </button>
                 </div>
                 <div class="ml-auto flex items-center gap-2 px-1 md:py-2">
                     <ToggleButton
@@ -58,24 +65,49 @@
                 </div>
             </div>
         </div>
+        <ExtractEmbeddedModal
+            :is-open="extractModalOpen"
+            :media-id="extractEpisode?.id ?? null"
+            :media-type="MEDIA_TYPE.EPISODE"
+            :title="extractEpisode?.title"
+            @close="extractModalOpen = false"
+            @queued="onExtractQueued" />
     </div>
 </template>
 <script setup lang="ts">
+import { ref } from 'vue'
 import { IEpisode, ISubtitle, MEDIA_TYPE } from '@/ts'
 import BadgeComponent from '@/components/common/BadgeComponent.vue'
 import ContextMenu from '@/components/layout/ContextMenu.vue'
 import ToggleButton from '@/components/common/ToggleButton.vue'
 import ActiveTranslationBadge from '@/components/common/ActiveTranslationBadge.vue'
+import ExtractEmbeddedModal from '@/components/features/subtitle/ExtractEmbeddedModal.vue'
 import { useShowStore } from '@/store/show'
 
 const props = defineProps<{
     episodes: IEpisode[]
     subtitles: ISubtitle[]
 }>()
+const emit = defineEmits<{
+    (e: 'queued', jobId: number, mediaId: number): void
+}>()
 const showStore = useShowStore()
+const extractModalOpen = ref(false)
+const extractEpisode = ref<IEpisode | null>(null)
 
-const getSubtitle = (fileName: string | null) => {
-    if (!fileName) return null
+const openExtractModal = (episode: IEpisode) => {
+    extractEpisode.value = episode
+    extractModalOpen.value = true
+}
+
+const onExtractQueued = (jobId: number) => {
+    if (extractEpisode.value) {
+        emit('queued', jobId, extractEpisode.value.id)
+    }
+}
+
+const getSubtitle = (fileName: string | null | undefined) => {
+    if (!fileName) return []
     return props.subtitles
         .filter(
             (subtitle: ISubtitle) =>

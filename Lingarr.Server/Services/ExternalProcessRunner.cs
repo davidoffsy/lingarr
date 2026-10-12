@@ -16,10 +16,19 @@ public class ExternalProcessRunner : IExternalProcessRunner
     }
 
     /// <inheritdoc />
-    public async Task<ExternalProcessResult> RunAsync(
+    public Task<ExternalProcessResult> RunAsync(
         string fileName,
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
+        CancellationToken cancellationToken = default)
+        => RunStreamingAsync(fileName, arguments, timeout, onStandardOutputLine: null, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<ExternalProcessResult> RunStreamingAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        TimeSpan timeout,
+        Action<string>? onStandardOutputLine,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(fileName))
@@ -74,7 +83,7 @@ public class ExternalProcessRunner : IExternalProcessRunner
 
         using (process)
         {
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+            var stdoutTask = ReadStdoutLinesAsync(process.StandardOutput, onStandardOutputLine);
             var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -114,6 +123,45 @@ public class ExternalProcessRunner : IExternalProcessRunner
                 StandardError = await stderrTask
             };
         }
+    }
+
+    private static async Task<string> ReadStdoutLinesAsync(StreamReader reader, Action<string>? onLine)
+    {
+        var builder = new StringBuilder();
+        while (true)
+        {
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync();
+            }
+            catch (Exception ex) when (ex is IOException or ObjectDisposedException)
+            {
+                break;
+            }
+
+            if (line == null)
+            {
+                break;
+            }
+
+            builder.AppendLine(line);
+            if (onLine == null)
+            {
+                continue;
+            }
+
+            try
+            {
+                onLine(line);
+            }
+            catch
+            {
+                // Progress callbacks must not fail the process.
+            }
+        }
+
+        return builder.ToString();
     }
 
     private async Task TryKillProcess(Process process, string fileName)

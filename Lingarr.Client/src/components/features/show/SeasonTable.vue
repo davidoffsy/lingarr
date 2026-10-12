@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <div class="bg-secondary p-4">
         <div
             class="grid grid-cols-12 border-b-2 border-secondary bg-primary font-bold text-secondary-content">
@@ -50,7 +50,8 @@
             <EpisodeTable
                 v-if="expandedSeason?.id === season.id"
                 :subtitles="subtitles"
-                :episodes="season.episodes" />
+                :episodes="season.episodes"
+                @queued="onExtractQueued" />
         </div>
     </div>
 </template>
@@ -63,6 +64,7 @@ import CaretButton from '@/components/common/CaretButton.vue'
 import ToggleButton from '@/components/common/ToggleButton.vue'
 import services from '@/services'
 import { useShowStore } from '@/store/show'
+import useExtractBadgeRefresh from '@/composables/useExtractBadgeRefresh'
 
 defineProps<{
     seasons: ISeason[]
@@ -71,6 +73,9 @@ defineProps<{
 const showStore = useShowStore()
 const subtitles: Ref<ISubtitle[]> = ref([])
 const expandedSeason: Ref<ISeason | null> = ref(null)
+const { onQueued: trackExtractQueued } = useExtractBadgeRefresh(MEDIA_TYPE.EPISODE, () => {
+    void collectSubtitles()
+})
 
 async function toggleSeason(season: ISeason) {
     if (!season.episodes.length) return
@@ -86,5 +91,9 @@ async function collectSubtitles() {
     if (expandedSeason.value?.path) {
         subtitles.value = await services.subtitle.collect(expandedSeason.value.path)
     }
+}
+
+const onExtractQueued = (_jobId: number, mediaId: number) => {
+    trackExtractQueued(mediaId)
 }
 </script>

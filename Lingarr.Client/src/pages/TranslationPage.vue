@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <div class="w-full">
         <!-- Search and Filters -->
         <div class="flex flex-wrap items-center justify-between gap-2 bg-tertiary p-4">
@@ -104,14 +104,21 @@
                     class="items-center md:flex md:px-4 md:py-2"
                     :class="[
                         isSelectMode ? 'md:col-span-2' : 'md:col-span-3',
-                        item.status === TRANSLATION_STATUS.INPROGRESS && item.progress
+                        item.status === TRANSLATION_STATUS.INPROGRESS &&
+                        (item.progress || item.phase === 'extract')
                             ? 'flex w-full md:w-auto'
                             : 'hidden'
                     ]">
                     <div
-                        v-if="item.status === TRANSLATION_STATUS.INPROGRESS && item.progress"
+                        v-if="
+                            item.status === TRANSLATION_STATUS.INPROGRESS &&
+                            (item.progress || item.phase === 'extract')
+                        "
                         class="w-full">
-                        <TranslationProgress :progress="item.progress" />
+                        <TranslationProgress
+                            :progress="item.progress ?? 0"
+                            :indeterminate="item.phase === 'extract' && item.progress < 2"
+                            :label="item.phase === 'extract' ? 'Extracting' : undefined" />
                     </div>
                 </div>
                 <div

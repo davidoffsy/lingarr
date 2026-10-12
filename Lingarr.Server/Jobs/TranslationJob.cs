@@ -1,4 +1,4 @@
-﻿using Hangfire;
+using Hangfire;
 using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Translation;
 using Lingarr.Core.Configuration;
@@ -8,8 +8,10 @@ using Lingarr.Core.Enum;
 using Lingarr.Server.Filters;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Translation;
+using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
+using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Translation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Extensions;
@@ -29,6 +31,7 @@ public class TranslationJob
     private readonly ITranslationServiceFactory _translationServiceFactory;
     private readonly ITranslationRequestService _translationRequestService;
     private readonly ITranslationRequestEventService _eventService;
+    private readonly IEmbeddedSubtitleService _embeddedSubtitleService;
 
     public TranslationJob(
         ILogger<TranslationJob> logger,
@@ -40,7 +43,8 @@ public class TranslationJob
         IStatisticsService statisticsService,
         ITranslationServiceFactory translationServiceFactory,
         ITranslationRequestService translationRequestService,
-        ITranslationRequestEventService eventService)
+        ITranslationRequestEventService eventService,
+        IEmbeddedSubtitleService embeddedSubtitleService)
     {
         _logger = logger;
         _settings = settings;
@@ -52,6 +56,7 @@ public class TranslationJob
         _translationServiceFactory = translationServiceFactory;
         _translationRequestService = translationRequestService;
         _eventService = eventService;
+        _embeddedSubtitleService = embeddedSubtitleService;
     }
 
     [AutomaticRetry(Attempts = 0)]
@@ -68,15 +73,8 @@ public class TranslationJob
             await _scheduleService.UpdateJobState(jobName, JobStatus.Processing.GetDisplayName());
             cancellationToken.ThrowIfCancellationRequested();
 
-            var storedStatus = await _dbContext.TranslationRequests
-                .Where(storedRequest => storedRequest.Id == translationRequest.Id)
-                .Select(storedRequest => (TranslationStatus?)storedRequest.Status)
-                .FirstOrDefaultAsync(cancellationToken);
-            if (storedStatus is null or TranslationStatus.Completed or TranslationStatus.Cancelled)
+            if (await IsNoLongerRunnableAsync(translationRequest.Id, cancellationToken))
             {
-                _logger.LogInformation(
-                    "Skipping translation job for request {RequestId}, it is no longer runnable ({Status}).",
-                    translationRequest.Id, storedStatus);
                 return;
             }
 
@@ -86,8 +84,33 @@ public class TranslationJob
             await _eventService.LogEvent(request.Id, TranslationStatus.InProgress);
             await _translationRequestService.UpdateActiveCount();
 
+            var isEmbeddedExtract = EmbeddedSubtitlePlaceholder.TryParse(request.SubtitleToTranslate, out _, out _);
+            if (isEmbeddedExtract)
+            {
+                await _progressService.Emit(
+                    request,
+                    TranslationProgressMapping.ExtractStart,
+                    TranslationProgressMapping.ExtractPhase);
+                await WarnIfHangfireTimeoutTooLowAsync();
+            }
+
+            await EnsureEmbeddedSidecarAsync(request, cancellationToken, isEmbeddedExtract);
+
+            if (await ReloadAndSkipIfNotRunnableAsync(request, cancellationToken))
+            {
+                return;
+            }
+
+            if (isEmbeddedExtract)
+            {
+                await _progressService.Emit(
+                    request,
+                    TranslationProgressMapping.ExtractComplete,
+                    TranslationProgressMapping.ExtractPhase);
+            }
+
             _logger.LogInformation("TranslateJob started for subtitle: |Green|{filePath}|/Green|",
-                translationRequest.SubtitleToTranslate);
+                request.SubtitleToTranslate);
             var settings = await _settings.GetSettings([
                 SettingKeys.Translation.ServiceType,
                 SettingKeys.Translation.FixOverlappingSubtitles,
@@ -182,7 +205,17 @@ public class TranslationJob
                 throw new TranslationException($"No usable translation services configured: [{string.Join(", ", serviceNames)}]");
             }
             var translationService = services[0].Service;
-            var translator = new SubtitleTranslationService(services, _logger, _progressService, useTranslatedContext);
+            IProgressService translateProgress = _progressService;
+            if (isEmbeddedExtract)
+            {
+                translateProgress = new MappedProgressService(
+                    _progressService,
+                    TranslationProgressMapping.ExtractComplete,
+                    TranslationProgressMapping.TranslateSpan,
+                    TranslationProgressMapping.TranslatePhase);
+            }
+
+            var translator = new SubtitleTranslationService(services, _logger, translateProgress, useTranslatedContext);
             var subtitles = await _subtitleService.ReadSubtitles(request.SubtitleToTranslate);
 
             // subtitle already carries a translation from an earlier prior run.
@@ -307,6 +340,68 @@ public class TranslationJob
         }
     }
 
+    private async Task EnsureEmbeddedSidecarAsync(
+        TranslationRequest request,
+        CancellationToken cancellationToken,
+        bool reportProgress)
+    {
+        IProgress<FfmpegExtractProgress>? progress = null;
+        if (reportProgress)
+        {
+            var lastMapped = 0;
+            progress = new SynchronousProgress<FfmpegExtractProgress>(update =>
+            {
+                HangfireJobHeartbeat.Touch();
+                var mapped = update.Percent is int percent
+                    ? TranslationProgressMapping.FromExtractPercent(percent)
+                    : TranslationProgressMapping.ExtractStart;
+                if (mapped == lastMapped)
+                {
+                    return;
+                }
+
+                lastMapped = mapped;
+                _ = _progressService.Emit(request, mapped, TranslationProgressMapping.ExtractPhase);
+            });
+        }
+
+        var sidecarPath = await EmbeddedSidecarPreparer.EnsureAsync(
+            _embeddedSubtitleService,
+            request.SubtitleToTranslate,
+            cancellationToken,
+            progress);
+
+        if (string.Equals(sidecarPath, request.SubtitleToTranslate, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        request.SubtitleToTranslate = sidecarPath;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task WarnIfHangfireTimeoutTooLowAsync()
+    {
+        var extractMinutes = (int)(await GetExtractTimeoutAsync()).TotalMinutes;
+        var hangfireMinutes = HangfireJobTimeout.GetStorageMinutes();
+        if (extractMinutes <= hangfireMinutes)
+        {
+            return;
+        }
+
+        _logger.LogWarning(
+            "Extract timeout ({Extract} min) is greater than the Hangfire SQLite timeout ({Hangfire} min). " +
+            "Raise JOB_TIMEOUT_MINUTES or EXTRACT_TIMEOUT_MINUTES so Hangfire does not reclaim the job during a cloud extract.",
+            extractMinutes,
+            hangfireMinutes);
+    }
+
+    private async Task<TimeSpan> GetExtractTimeoutAsync()
+    {
+        var value = await _settings.GetSetting(SettingKeys.Translation.ExtractTimeoutMinutes);
+        return ExtractTimeout.Resolve(value);
+    }
+
     private async Task WriteSubtitles(TranslationRequest translationRequest,
         List<SubtitleItem> translatedSubtitles,
         bool stripSubtitleFormatting,
@@ -336,11 +431,55 @@ public class TranslationJob
         }
     }
 
+    private async Task<bool> IsNoLongerRunnableAsync(int requestId, CancellationToken cancellationToken)
+    {
+        var storedStatus = await _dbContext.TranslationRequests
+            .Where(storedRequest => storedRequest.Id == requestId)
+            .Select(storedRequest => (TranslationStatus?)storedRequest.Status)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (storedStatus is null or TranslationStatus.Completed or TranslationStatus.Cancelled)
+        {
+            _logger.LogInformation(
+                "Skipping translation job for request {RequestId}, it is no longer runnable ({Status}).",
+                requestId, storedStatus);
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<bool> ReloadAndSkipIfNotRunnableAsync(
+        TranslationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var entry = _dbContext.Entry(request);
+        if (entry.State != EntityState.Detached)
+        {
+            await entry.ReloadAsync(cancellationToken);
+            if (request.Status is TranslationStatus.Completed or TranslationStatus.Cancelled)
+            {
+                _logger.LogInformation(
+                    "Skipping translation job for request {RequestId} after extract ({Status}).",
+                    request.Id, request.Status);
+                return true;
+            }
+
+            return false;
+        }
+
+        return await IsNoLongerRunnableAsync(request.Id, cancellationToken);
+    }
+
     private async Task HandleCompletion(
         string jobName,
         TranslationRequest translationRequest,
         CancellationToken cancellationToken)
     {
+        if (await ReloadAndSkipIfNotRunnableAsync(translationRequest, cancellationToken))
+        {
+            return;
+        }
+
         translationRequest.CompletedAt = DateTimeOffset.UtcNow;
         translationRequest.Status = TranslationStatus.Completed;
         await _dbContext.SaveChangesAsync(cancellationToken);

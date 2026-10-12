@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <div v-if="settingsCompleted === 'true'" class="w-full">
         <div class="flex flex-wrap items-center justify-between gap-2 bg-tertiary p-4">
             <SearchComponent v-model="filter" />
@@ -87,22 +87,32 @@
                         </span>
                     </div>
                     <div
-                        :class="item.subtitles?.length ? 'flex' : 'hidden md:flex'"
-                        class="w-full flex-wrap items-center gap-2 md:col-span-4 md:w-auto md:px-4 md:py-2">
-                        <ContextMenu
-                            v-for="(subtitle, index) in item.subtitles"
-                            :key="`${index}-${subtitle.fileName}`"
-                            :subtitle="subtitle"
-                            :media="item"
-                            :media-type="MEDIA_TYPE.MOVIE"
-                            @update:toggle="toggleMovie(item)">
-                            <BadgeComponent>
-                                {{ subtitle.language.toUpperCase() }}
-                                <span v-if="subtitle.caption" class="text-primary-content/50">
-                                    - {{ subtitle.caption.toUpperCase() }}
-                                </span>
-                            </BadgeComponent>
-                        </ContextMenu>
+                        class="flex w-full flex-wrap items-center gap-2 md:col-span-4 md:w-auto md:px-4 md:py-2">
+                        <div
+                            :class="item.subtitles?.length ? 'flex' : 'hidden md:flex'"
+                            class="flex-wrap items-center gap-2">
+                            <ContextMenu
+                                v-for="(subtitle, index) in item.subtitles"
+                                :key="`${index}-${subtitle.fileName}`"
+                                :subtitle="subtitle"
+                                :media="item"
+                                :media-type="MEDIA_TYPE.MOVIE"
+                                @update:toggle="toggleMovie(item)">
+                                <BadgeComponent>
+                                    {{ subtitle.language.toUpperCase() }}
+                                    <span v-if="subtitle.caption" class="text-primary-content/50">
+                                        - {{ subtitle.caption.toUpperCase() }}
+                                    </span>
+                                </BadgeComponent>
+                            </ContextMenu>
+                        </div>
+                        <button
+                            type="button"
+                            title="提取内嵌字幕"
+                            class="inline-flex cursor-pointer items-center"
+                            @click.stop="openExtractModal(item)">
+                            <BadgeComponent>MKV</BadgeComponent>
+                        </button>
                     </div>
                     <div class="flex items-center gap-2 md:col-span-1 md:px-4 md:py-2">
                         <ToggleButton
@@ -156,6 +166,14 @@
             v-model="filter"
             :total-count="movies.totalCount"
             :page-size="movies.pageSize" />
+
+        <ExtractEmbeddedModal
+            :is-open="extractModalOpen"
+            :media-id="extractMedia?.id ?? null"
+            :media-type="MEDIA_TYPE.MOVIE"
+            :title="extractMedia?.title"
+            @close="extractModalOpen = false"
+            @queued="onExtractQueued" />
     </div>
     <NoMediaNotification v-else />
 </template>
@@ -164,6 +182,7 @@
 import { ref, computed, onMounted, ComputedRef } from 'vue'
 import { IFilter, ILanguage, IMovie, INPUT_TYPE, INPUT_VALIDATION_TYPE, IPagedResult, MEDIA_TYPE, SETTINGS } from '@/ts'
 import useDebounce from '@/composables/useDebounce'
+import useExtractBadgeRefresh from '@/composables/useExtractBadgeRefresh'
 import { useMovieStore } from '@/store/movie'
 import { useSettingStore } from '@/store/setting'
 import { useInstanceStore } from '@/store/instance'
@@ -180,11 +199,15 @@ import InputComponent from '@/components/common/InputComponent.vue'
 import CheckboxComponent from '@/components/common/CheckboxComponent.vue'
 import ButtonComponent from '@/components/common/ButtonComponent.vue'
 import ActiveTranslationBadge from '@/components/common/ActiveTranslationBadge.vue'
+import ExtractEmbeddedModal from '@/components/features/subtitle/ExtractEmbeddedModal.vue'
 
 const movieStore = useMovieStore()
 const settingStore = useSettingStore()
 const instanceStore = useInstanceStore()
 const translateStore = useTranslateStore()
+const { onQueued: trackExtractQueued } = useExtractBadgeRefresh(MEDIA_TYPE.MOVIE, () => {
+    void movieStore.fetch()
+})
 
 const settingsCompleted: ComputedRef<string> = computed(
     () => settingStore.getSetting(SETTINGS.RADARR_SETTINGS_COMPLETED) as string
@@ -210,6 +233,19 @@ const toggleMovie = useDebounce(async (movie: IMovie) => {
 }, 1000)
 
 const isSelectMode = ref(false)
+const extractModalOpen = ref(false)
+const extractMedia = ref<IMovie | null>(null)
+
+const openExtractModal = (movie: IMovie) => {
+    extractMedia.value = movie
+    extractModalOpen.value = true
+}
+
+const onExtractQueued = (_jobId: number) => {
+    if (extractMedia.value) {
+        trackExtractQueued(extractMedia.value.id)
+    }
+}
 
 const toggleSelectMode = () => {
     isSelectMode.value = !isSelectMode.value

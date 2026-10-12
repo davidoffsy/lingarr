@@ -313,7 +313,10 @@ ffmpeg -y -i {mkv} -map 0:{index} -c:s copy {stem}.{lang}[.caption].{ext}
 
 ## 9. 二期（不在本次范围）
 
-- 列表显示「内嵌」徽章
+列表按需提取与云盘进度已单独成文，见 [`mkv-on-demand-extract-ui-plan.md`](./mkv-on-demand-extract-ui-plan.md)（用徽章旁按钮代替列表全量「内嵌」徽章，避免列表 ffprobe）。
+
+仍未纳入：
+
 - 同步时预探测并缓存轨信息
 - 完整视频路径入库
 - MP4 `mov_text`

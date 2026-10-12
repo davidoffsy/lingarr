@@ -151,7 +151,7 @@ These variables can be used
 |---------------------------------------------------|-----------------------------------------------------------------------------------------|
 | `ASPNETCORE_URLS=http://+:9876`                   | The internal port that Lingarr will listen on inside the container.                     |
 | `MAX_CONCURRENT_JOBS=1`                           | Sets the amount of jobs that can run concurrently, defaults to 1.                       |
-| `JOB_TIMEOUT_MINUTES=30`                          | Minutes of silence before Hangfire retries a job. `sqlite` only, defaults to `30`.      |
+| `JOB_TIMEOUT_MINUTES=30`                          | Minutes of silence before Hangfire retries a job. `sqlite` only, defaults to `30`. Effective SQLite timeout is `max(JOB_TIMEOUT_MINUTES, EXTRACT_TIMEOUT_MINUTES)` (extract default 60). |
 | `DB_CONNECTION=mysql`                             | Specifies the database connection type. Options are `mysql`, `postgresql` or `sqlite`.  |
 | `DB_HOST=Lingarr.Mysql`                           | The hostname for the MySQL database (required when using `mysql` or `postgresql`).      |
 | `DB_PORT=3306`                                    | The port for the MySQL database (required when using `mysql` or `postgresql`).          |
@@ -163,6 +163,8 @@ These variables can be used
 | `FFPROBE_PATH`                                    | Optional path to the `ffprobe` binary. Defaults to `ffprobe` on `PATH`.                 |
 
 The Lingarr Docker image bundles **FFmpeg** (including `ffprobe`) so it can inspect and extract text subtitle tracks from MKV files. That makes the image larger than a plain ASP.NET runtime. Mount the same media folders that contain the **video files** (not only sidecar subtitles), and make sure the container user can read them. Missing binaries are skipped; existing sidecar translation still works.
+
+You can list and extract embedded text tracks from a movie or episode without enabling automatic MKV scanning. Extraction reads the video file; on a cloud mount this can take a long time. Use the Translations page to watch extract then translation progress. On-demand extract timeout defaults to 60 minutes; automatic / bulk extract stays at 2 minutes. SQLite Hangfire uses `max(JOB_TIMEOUT_MINUTES, EXTRACT_TIMEOUT_MINUTES)`.
 
 Additional [settings](Settings.MD) can be found here that can be set as environment variables to persist settings for each reinstall
 

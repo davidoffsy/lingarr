@@ -118,7 +118,9 @@ docker run -d \
 
 The Lingarr image installs FFmpeg (including `ffprobe`) so it can inspect and extract text subtitle tracks from MKV files. This increases the image size compared to a plain ASP.NET runtime.
 
-When you enable **Scan embedded MKV subtitles** in Settings → Subtitle, mount the folders that contain the **video files** themselves (the same `/movies` and `/tv` volumes as Radarr/Sonarr), and ensure the container user can read those files. Sidecar translation does not require FFmpeg; if the binaries are missing, Lingarr logs a warning and skips embedded tracks.
+When you enable **Scan embedded MKV subtitles** in Settings → Subtitle, or use the **MKV** button on a movie / episode to extract a track on demand, mount the folders that contain the **video files** themselves (the same `/movies` and `/tv` volumes as Radarr/Sonarr), and ensure the container user can read those files. Sidecar translation does not require FFmpeg; if the binaries are missing, Lingarr logs a warning and skips embedded tracks.
+
+Extracting a text track copies subtitle packets from the video. On a cloud / rclone / CloudDrive mount that usually means reading the **entire** file, which can take a long time. The Translations page shows extract progress (0–20%) then translation (20–100%). Set **Embedded extract timeout** (default 60 minutes) in Settings → Subtitle for on-demand extracts. Automatic / bulk extract stays at 2 minutes. SQLite Hangfire uses `max(JOB_TIMEOUT_MINUTES, EXTRACT_TIMEOUT_MINUTES)` so the worker is not treated as dead mid-extract. Cancel the request if a remux is still too slow.
 
 Local development outside Docker can install FFmpeg on the host, or point `FFMPEG_PATH` / `FFPROBE_PATH` at custom binaries.
 

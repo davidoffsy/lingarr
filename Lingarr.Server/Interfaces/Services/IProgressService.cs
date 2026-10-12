@@ -15,6 +15,12 @@ public interface IProgressService
     Task Emit(TranslationRequest translationRequest, int progress);
 
     /// <summary>
+    /// Emits progress with an optional phase (<c>extract</c> / <c>translate</c>) for the UI.
+    /// Unknown phases are ignored by older clients.
+    /// </summary>
+    Task Emit(TranslationRequest translationRequest, int progress, string? phase);
+
+    /// <summary>
     /// Saves a translated line to the database and broadcasts it via SignalR.
     /// </summary>
     Task EmitLine(

@@ -24,4 +24,15 @@ public interface IExternalProcessRunner
         IReadOnlyList<string> arguments,
         TimeSpan timeout,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Same as <see cref="RunAsync"/> but invokes <paramref name="onStandardOutputLine"/> for each
+    /// stdout line as it arrives (used for ffmpeg <c>-progress pipe:1</c>).
+    /// </summary>
+    Task<ExternalProcessResult> RunStreamingAsync(
+        string fileName,
+        IReadOnlyList<string> arguments,
+        TimeSpan timeout,
+        Action<string>? onStandardOutputLine,
+        CancellationToken cancellationToken = default);
 }

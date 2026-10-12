@@ -30,7 +30,7 @@ secrets:
 |----------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------|
 | `BASE_PATH`                | Optional URL prefix to host Lingarr under a sub-path (e.g., behind a reverse proxy). Example: `/lingarr`. Leave unset to serve from the root. |
 | `MAX_CONCURRENT_JOBS`      | Maximum number of Hangfire worker threads processing jobs in parallel. Defaults to `1` when unset.                                            |
-| `JOB_TIMEOUT_MINUTES`      | Minutes of silence before Hangfire retries a job. `sqlite` only, defaults to `30`.                                                            |
+| `JOB_TIMEOUT_MINUTES`      | Minutes of silence before Hangfire retries a job. `sqlite` only, defaults to `30`. Effective SQLite timeout is `max(JOB_TIMEOUT_MINUTES, EXTRACT_TIMEOUT_MINUTES)` (extract default `60`). |
 | `SQLITE_DB_PATH`           | Path to the SQLite database file used when `DB_CONNECTION` is `sqlite`. Defaults to `local.db` within `/app/config/`.                         |
 | `DB_HANGFIRE_SQLITE_PATH`  | Path to the SQLite database file used by the Hangfire job store. Defaults to `/app/config/Hangfire.db`.                                       |
 | `FFMPEG_PATH`              | Optional path to the `ffmpeg` binary. Defaults to `ffmpeg` on `PATH`. The Docker image already includes FFmpeg.                               |
@@ -89,6 +89,7 @@ Each report also carries an installation identifier. This is a random value gene
 | `USE_BATCH_TRANSLATION`  | Set to `true` to translate subtitles in batches with AI services, defaults to false. |
 | `SCAN_EMBEDDED_SUBTITLES` | Set to `true` to probe MKV text tracks (SRT / ASS / SSA) during automatic and bulk translation. Movie and show lists are never probed. Defaults to false. |
 | `EXTRACT_EMBEDDED_SOURCE` | Set to `true` to write the selected source track as a sidecar next to the video so Plex / Emby can switch languages. Defaults to true. Translation of embedded tracks always extracts this file first. |
+| `EXTRACT_TIMEOUT_MINUTES` | Minutes ffmpeg may spend copying an embedded text track on demand. Defaults to `60`. Automatic / bulk extract uses a 2-minute timeout. |
 
 The `SOURCE_LANGUAGES` and `TARGET_LANGUAGES` variables should be provided as a minified JSON array. Each object in the array should contain the `name` and `code` of the language.
 

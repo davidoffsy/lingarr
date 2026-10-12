@@ -60,7 +60,7 @@
                         <div v-if="detail.subtitleToTranslate" class="col-span-2">
                             <span class="font-semibold">Subtitle Path</span>
                             <div class="mt-1 text-sm break-all">
-                                {{ detail.subtitleToTranslate }}
+                                {{ formatSubtitlePath(detail.subtitleToTranslate) }}
                             </div>
                         </div>
                     </div>
@@ -80,9 +80,12 @@
                         </details>
                     </div>
                     <div v-if="showProgress" class="flex items-center gap-3">
-                        <TranslationProgress :progress="displayProgress" />
+                        <TranslationProgress
+                            :progress="displayProgress"
+                            :indeterminate="phase === 'extract' && progress < 2"
+                            :label="phase === 'extract' ? 'Extracting' : undefined" />
                         <span class="text-primary-content shrink-0 text-sm font-medium">
-                            {{ displayProgress }}%
+                            {{ phase === 'extract' && progress < 2 ? '…' : `${displayProgress}%` }}
                         </span>
                     </div>
                 </template>
@@ -233,7 +236,8 @@ import {
     ISubtitleLineComparison,
     ProofreadLineOrigin,
     PROOFREAD_LINE_ORIGIN,
-    TRANSLATION_STATUS
+    TRANSLATION_STATUS,
+    formatSubtitlePath
 } from '@/ts'
 import { useSignalR } from '@/composables/useSignalR'
 import { formatDateTime } from '@/utils/date'
@@ -270,6 +274,7 @@ const translationRequestStore = useTranslationRequestStore()
 const detail = ref<ITranslationRequestDetail | null>(null)
 const loading = ref(true)
 const progress = ref(0)
+const phase = ref<string | null>(null)
 const hubConnection = ref<Hub>()
 const latestPosition = ref<number>(0)
 const proofreadState = reactive<Record<number, IProofreadLineState>>({})
@@ -290,7 +295,8 @@ const showProgress = computed(() => {
     }
     const status = detail.value.status
     return (
-        (status === TRANSLATION_STATUS.INPROGRESS && progress.value > 0) ||
+        (status === TRANSLATION_STATUS.INPROGRESS &&
+            (progress.value > 0 || phase.value === 'extract')) ||
         status === TRANSLATION_STATUS.COMPLETED
     )
 })
@@ -303,6 +309,9 @@ const handleProgress = (requestProgress: IRequestProgress) => {
     if (detail.value && requestProgress.id === detail.value.id) {
         detail.value.status = requestProgress.status
         progress.value = requestProgress.progress
+        if (requestProgress.phase) {
+            phase.value = requestProgress.phase
+        }
         if (requestProgress.completedAt) {
             detail.value.completedAt = requestProgress.completedAt
         }

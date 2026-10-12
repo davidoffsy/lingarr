@@ -53,6 +53,7 @@ export const SETTINGS = {
     IGNORE_CAPTIONS: 'ignore_captions',
     SCAN_EMBEDDED_SUBTITLES: 'scan_embedded_subtitles',
     EXTRACT_EMBEDDED_SOURCE: 'extract_embedded_source',
+    EXTRACT_TIMEOUT_MINUTES: 'extract_timeout_minutes',
     REQUEST_TIMEOUT: 'request_timeout',
     MAX_RETRIES: 'max_retries',
     RETRY_DELAY: 'retry_delay',
@@ -126,6 +127,7 @@ export interface ISettings {
     ignore_captions: string
     scan_embedded_subtitles: string
     extract_embedded_source: string
+    extract_timeout_minutes: string
     request_timeout: string
     max_retries: string
     retry_delay: string

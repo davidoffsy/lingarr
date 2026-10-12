@@ -40,6 +40,7 @@ export interface ITranslationRequest {
     mediaType: MediaType
     status: TranslationStatus
     progress: number
+    phase?: string | null
     completedAt?: string | null
     errorMessage?: string | null
     stackTrace?: string | null
@@ -123,6 +124,7 @@ export interface IRequestProgress {
     completedAt?: string | null
     errorMessage?: string | null
     stackTrace?: string | null
+    phase?: string | null
 }
 
 export interface IImage {

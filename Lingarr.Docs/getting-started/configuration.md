@@ -9,7 +9,7 @@ Lingarr is primarily configured through its web interface. However, every settin
 | `ASPNETCORE_URLS=http://+:9876` | The internal port that Lingarr will listen on inside the container. |
 | `BASE_PATH` | Optional URL prefix to host Lingarr under a sub-path (e.g., behind a reverse proxy). Example: `/lingarr`. Leave unset to serve from the root. |
 | `MAX_CONCURRENT_JOBS=1` | Sets the amount of jobs that can run concurrently, defaults to 1. |
-| `JOB_TIMEOUT_MINUTES=30` | Minutes of silence before Hangfire retries a job. `sqlite` only, defaults to `30`. |
+| `JOB_TIMEOUT_MINUTES=30` | Minutes of silence before Hangfire retries a job. `sqlite` only, defaults to `30`. The effective SQLite timeout is `max(JOB_TIMEOUT_MINUTES, EXTRACT_TIMEOUT_MINUTES)` (extract default `60`), so a default install is not reclaimed mid-extract. |
 | `TZ=Europe/Amsterdam` | The time zone Lingarr runs in, defaults to UTC. It applies to schedules, log timestamps and every date shown in the web interface, so set it to your own zone. A schedule of `0 3 * * *` runs at 3am in this zone. |
 | `FFMPEG_PATH` | Optional path to the `ffmpeg` binary. Defaults to `ffmpeg` on `PATH`. The Docker image already includes FFmpeg. |
 | `FFPROBE_PATH` | Optional path to the `ffprobe` binary. Defaults to `ffprobe` on `PATH`. The Docker image already includes ffprobe. |
@@ -86,6 +86,7 @@ This is a random value generated once on first submission and stored locally as 
 | `USE_BATCH_TRANSLATION` | Set to `true` to translate subtitles in batches with AI services, defaults to false. |
 | `SCAN_EMBEDDED_SUBTITLES` | Set to `true` to probe MKV text tracks (SRT / ASS / SSA) during automatic and bulk translation. Movie and show lists are never probed. Defaults to false. |
 | `EXTRACT_EMBEDDED_SOURCE` | Set to `true` to write the selected source track as a sidecar next to the video so Plex / Emby can switch languages. Defaults to true. Translation of embedded tracks always extracts this file first. |
+| `EXTRACT_TIMEOUT_MINUTES` | Minutes ffmpeg may spend copying an embedded text track **on demand** (the MKV button). Defaults to `60`. Automatic / bulk extract still uses a 2-minute timeout so a cloud remux cannot stall the queue. Cancel the request if a remux is still too slow. |
 
 The `SOURCE_LANGUAGES` and `TARGET_LANGUAGES` variables should be provided as a minified JSON array. Each object in the array should contain the `name` and [ISO 639](https://en.wikipedia.org/wiki/List_of_ISO_639_language_codes) or [ISO 639-2](https://en.wikipedia.org/wiki/ISO_639-2) language codes:
 

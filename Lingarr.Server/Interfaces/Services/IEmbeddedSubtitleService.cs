@@ -1,3 +1,4 @@
+using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 
 namespace Lingarr.Server.Interfaces.Services;
@@ -17,6 +18,13 @@ public interface IEmbeddedSubtitleService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Probes an MKV and reports extractable tracks, skipped streams, and why probing failed.
+    /// </summary>
+    Task<EmbeddedSubtitleProbeResult> ProbeDetailedAsync(
+        string mkvPath,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Copies a probed text track to a Plex/Emby-compatible sidecar next to the video.
     /// Does not overwrite a non-empty existing sidecar. Returns the sidecar path, or <c>null</c> on failure.
     /// </summary>
@@ -24,4 +32,17 @@ public interface IEmbeddedSubtitleService
         string mkvPath,
         EmbeddedSubtitleTrack track,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Same as <see cref="ExtractAsync"/> but returns a user-visible error message on failure
+    /// and can report ffmpeg extract progress (0–100 of the extract itself).
+    /// When <paramref name="timeout"/> is null, uses the configured on-demand extract timeout.
+    /// </summary>
+    Task<EmbeddedSubtitleExtractResult> ExtractDetailedAsync(
+        string mkvPath,
+        EmbeddedSubtitleTrack track,
+        CancellationToken cancellationToken = default,
+        IProgress<FfmpegExtractProgress>? progress = null,
+        double? durationSeconds = null,
+        TimeSpan? timeout = null);
 }

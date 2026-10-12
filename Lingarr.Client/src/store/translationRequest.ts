@@ -114,6 +114,7 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
                             ...request,
                             status: requestProgress.status,
                             progress: requestProgress.progress,
+                            phase: requestProgress.phase ?? request.phase,
                             completedAt: requestProgress.completedAt,
                             errorMessage: requestProgress.errorMessage ?? request.errorMessage,
                             stackTrace: requestProgress.stackTrace ?? request.stackTrace

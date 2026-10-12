@@ -1,6 +1,8 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Lingarr.Core.Configuration;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
@@ -9,12 +11,26 @@ namespace Lingarr.Server.Services.Media;
 
 public class EmbeddedSubtitleService : IEmbeddedSubtitleService
 {
+    public const string ExtractingSuffix = ".extracting";
+
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan ExtractTimeout = TimeSpan.FromMinutes(2);
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> ExtractGates = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> ExtractableExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".srt", ".ass", ".ssa"
+    };
+
+    private static readonly HashSet<string> ImageSubtitleCodecs = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "hdmv_pgs_subtitle",
+        "dvd_subtitle",
+        "dvb_subtitle",
+        "dvb_teletext",
+        "xsub",
+        "pgssub",
+        "dvdsub",
+        "pgs"
     };
 
     private static readonly JsonSerializerOptions ProbeJsonOptions = new()
@@ -24,15 +40,18 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
 
     private readonly IExternalProcessRunner _processRunner;
     private readonly LanguageCodeService _languageCodeService;
+    private readonly ISettingService _settingService;
     private readonly ILogger<EmbeddedSubtitleService> _logger;
 
     public EmbeddedSubtitleService(
         IExternalProcessRunner processRunner,
         LanguageCodeService languageCodeService,
+        ISettingService settingService,
         ILogger<EmbeddedSubtitleService> logger)
     {
         _processRunner = processRunner;
         _languageCodeService = languageCodeService;
+        _settingService = settingService;
         _logger = logger;
     }
 
@@ -41,9 +60,18 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
         string mkvPath,
         CancellationToken cancellationToken = default)
     {
+        var result = await ProbeDetailedAsync(mkvPath, cancellationToken);
+        return result.Tracks;
+    }
+
+    /// <inheritdoc />
+    public async Task<EmbeddedSubtitleProbeResult> ProbeDetailedAsync(
+        string mkvPath,
+        CancellationToken cancellationToken = default)
+    {
         if (!IsReadableMkv(mkvPath))
         {
-            return [];
+            return EmbeddedSubtitleProbeResult.NotFound(EmbeddedSubtitleProbeResult.ReasonNoMkv);
         }
 
         var arguments = new[]
@@ -51,7 +79,7 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
             "-v", "error",
             "-select_streams", "s",
             "-show_entries",
-            "stream=index,codec_name:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired",
+            "format=duration:stream=index,codec_name:stream_tags=language,title:stream_disposition=default,forced,hearing_impaired",
             "-of", "json",
             mkvPath
         };
@@ -72,7 +100,7 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "ffprobe failed while listing subtitle tracks in {Path}.", mkvPath);
-            return [];
+            return EmbeddedSubtitleProbeResult.NotFound(EmbeddedSubtitleProbeResult.ReasonProbeFailed);
         }
 
         if (!result.ExecutableFound)
@@ -80,13 +108,13 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
             _logger.LogWarning(
                 "ffprobe was not found; embedded text subtitles in {Path} will be skipped.",
                 mkvPath);
-            return [];
+            return EmbeddedSubtitleProbeResult.NotFound(EmbeddedSubtitleProbeResult.ReasonNoFfprobe);
         }
 
         if (result.TimedOut)
         {
             _logger.LogWarning("ffprobe timed out while listing subtitle tracks in {Path}.", mkvPath);
-            return [];
+            return EmbeddedSubtitleProbeResult.NotFound(EmbeddedSubtitleProbeResult.ReasonTimeout);
         }
 
         if (!result.Succeeded)
@@ -96,10 +124,19 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
                 result.ExitCode,
                 mkvPath,
                 Truncate(result.StandardError));
-            return [];
+            return EmbeddedSubtitleProbeResult.NotFound(EmbeddedSubtitleProbeResult.ReasonProbeFailed);
         }
 
-        return ParseTracks(result.StandardOutput, mkvPath);
+        var parsed = ParseTracks(result.StandardOutput, mkvPath);
+        if (parsed == null)
+        {
+            return EmbeddedSubtitleProbeResult.NotFound(EmbeddedSubtitleProbeResult.ReasonProbeFailed);
+        }
+
+        return EmbeddedSubtitleProbeResult.Success(
+            parsed.Value.Tracks,
+            parsed.Value.Skipped,
+            parsed.Value.DurationSeconds);
     }
 
     /// <inheritdoc />
@@ -108,11 +145,28 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
         EmbeddedSubtitleTrack track,
         CancellationToken cancellationToken = default)
     {
+        var result = await ExtractDetailedAsync(
+            mkvPath,
+            track,
+            cancellationToken,
+            timeout: ExtractTimeout.ResolveAutomatic());
+        return result.SidecarPath;
+    }
+
+    /// <inheritdoc />
+    public async Task<EmbeddedSubtitleExtractResult> ExtractDetailedAsync(
+        string mkvPath,
+        EmbeddedSubtitleTrack track,
+        CancellationToken cancellationToken = default,
+        IProgress<FfmpegExtractProgress>? progress = null,
+        double? durationSeconds = null,
+        TimeSpan? timeout = null)
+    {
         ArgumentNullException.ThrowIfNull(track);
 
         if (!IsReadableMkv(mkvPath))
         {
-            return null;
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.MissingMkv);
         }
 
         if (track.Index < 0 || !ExtractableExtensions.Contains(track.Extension))
@@ -122,7 +176,7 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
                 track.Index,
                 track.CodecName,
                 mkvPath);
-            return null;
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.UnsupportedTrack);
         }
 
         string outputPath;
@@ -133,14 +187,53 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not build sidecar path for stream {Index} of {Path}.", track.Index, mkvPath);
-            return null;
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.FfmpegFailed);
         }
 
+        var gate = ExtractGates.GetOrAdd(outputPath, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await ExtractLockedAsync(
+                mkvPath,
+                track,
+                outputPath,
+                cancellationToken,
+                progress,
+                durationSeconds,
+                timeout);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<EmbeddedSubtitleExtractResult> ExtractLockedAsync(
+        string mkvPath,
+        EmbeddedSubtitleTrack track,
+        string outputPath,
+        CancellationToken cancellationToken,
+        IProgress<FfmpegExtractProgress>? progress,
+        double? durationSeconds,
+        TimeSpan? timeout)
+    {
         if (HasNonEmptyFile(outputPath))
         {
             _logger.LogDebug("Sidecar {OutputPath} already exists; skipping extract.", outputPath);
-            return outputPath;
+            progress?.Report(new FfmpegExtractProgress(100, true));
+            return EmbeddedSubtitleExtractResult.Ok(outputPath);
         }
+
+        if (progress != null && durationSeconds is null)
+        {
+            durationSeconds = await TryProbeDurationAsync(mkvPath, cancellationToken);
+        }
+
+        progress?.Report(new FfmpegExtractProgress(0, false));
+
+        var tempPath = outputPath + ExtractingSuffix;
+        TryDeleteIncomplete(tempPath);
 
         var arguments = new[]
         {
@@ -148,69 +241,123 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
             "-i", mkvPath,
             "-map", $"0:{track.Index}",
             "-c:s", "copy",
-            outputPath
+            "-progress", "pipe:1",
+            "-nostats",
+            tempPath
         };
+
+        var resolvedTimeout = timeout ?? await GetExtractTimeoutAsync();
+        var lastPercent = 0;
 
         ExternalProcessResult result;
         try
         {
-            result = await _processRunner.RunAsync(
+            result = await _processRunner.RunStreamingAsync(
                 FfmpegExecutable.Ffmpeg,
                 arguments,
-                ExtractTimeout,
+                resolvedTimeout,
+                line =>
+                {
+                    if (FfmpegProgressParser.IsEnd(line))
+                    {
+                        progress?.Report(new FfmpegExtractProgress(100, true));
+                        return;
+                    }
+
+                    if (!FfmpegProgressParser.TryParseOutTimeUs(line, out var outTimeUs))
+                    {
+                        return;
+                    }
+
+                    HangfireJobHeartbeat.Touch();
+
+                    if (durationSeconds is not > 0)
+                    {
+                        progress?.Report(new FfmpegExtractProgress(null, false));
+                        return;
+                    }
+
+                    var percent = FfmpegProgressParser.ToPercent(outTimeUs, durationSeconds.Value);
+                    if (percent is null || percent == lastPercent)
+                    {
+                        return;
+                    }
+
+                    lastPercent = percent.Value;
+                    progress?.Report(new FfmpegExtractProgress(percent, false));
+                },
                 cancellationToken);
         }
         catch (OperationCanceledException)
         {
-            TryDeleteIncomplete(outputPath);
+            TryDeleteIncomplete(tempPath);
             throw;
         }
         catch (Exception ex)
         {
-            TryDeleteIncomplete(outputPath);
+            TryDeleteIncomplete(tempPath);
             _logger.LogWarning(ex, "ffmpeg failed while extracting stream {Index} from {Path}.", track.Index, mkvPath);
-            return null;
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.FfmpegFailed);
         }
 
         if (!result.ExecutableFound)
         {
+            TryDeleteIncomplete(tempPath);
             _logger.LogWarning(
                 "ffmpeg was not found; embedded text subtitles in {Path} will be skipped.",
                 mkvPath);
-            return null;
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.MissingFfmpeg);
         }
 
         if (result.TimedOut)
         {
-            TryDeleteIncomplete(outputPath);
+            TryDeleteIncomplete(tempPath);
             _logger.LogWarning(
                 "ffmpeg timed out while extracting stream {Index} from {Path}.",
                 track.Index,
                 mkvPath);
-            return null;
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.TimedOut(resolvedTimeout));
         }
 
         if (!result.Succeeded)
         {
-            TryDeleteIncomplete(outputPath);
+            TryDeleteIncomplete(tempPath);
             _logger.LogWarning(
                 "ffmpeg exited {ExitCode} while extracting stream {Index} from {Path}: {Error}",
                 result.ExitCode,
                 track.Index,
                 mkvPath,
                 Truncate(result.StandardError));
-            return null;
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.FfmpegFailed);
         }
 
-        if (!HasNonEmptyFile(outputPath))
+        if (!HasNonEmptyFile(tempPath))
         {
-            TryDeleteIncomplete(outputPath);
+            TryDeleteIncomplete(tempPath);
             _logger.LogWarning(
                 "Extracted sidecar {OutputPath} from {Path} stream {Index} was missing or empty.",
                 outputPath,
                 mkvPath,
                 track.Index);
-            return null;
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.EmptyOutput);
+        }
+
+        if (HasNonEmptyFile(outputPath))
+        {
+            TryDeleteIncomplete(tempPath);
+            progress?.Report(new FfmpegExtractProgress(100, true));
+            return EmbeddedSubtitleExtractResult.Ok(outputPath);
+        }
+
+        try
+        {
+            File.Move(tempPath, outputPath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            TryDeleteIncomplete(tempPath);
+            _logger.LogWarning(ex, "Could not move extracted sidecar to {OutputPath}.", outputPath);
+            return EmbeddedSubtitleExtractResult.Fail(EmbeddedSubtitleExtractResult.FfmpegFailed);
         }
 
         _logger.LogInformation(
@@ -221,14 +368,16 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
             mkvPath,
             outputPath);
 
-        return outputPath;
+        progress?.Report(new FfmpegExtractProgress(100, true));
+        return EmbeddedSubtitleExtractResult.Ok(outputPath);
     }
 
-    private IReadOnlyList<EmbeddedSubtitleTrack> ParseTracks(string json, string mkvPath)
+    private (IReadOnlyList<EmbeddedSubtitleTrack> Tracks, IReadOnlyList<SkippedEmbeddedSubtitleTrack> Skipped, double? DurationSeconds)?
+        ParseTracks(string json, string mkvPath)
     {
         if (string.IsNullOrWhiteSpace(json))
         {
-            return [];
+            return ([], [], null);
         }
 
         FfprobeOutput? probe;
@@ -239,15 +388,18 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
         catch (JsonException ex)
         {
             _logger.LogWarning(ex, "Could not parse ffprobe JSON for {Path}.", mkvPath);
-            return [];
+            return null;
         }
+
+        var durationSeconds = probe?.Format != null ? ParseDuration(probe.Format.Duration) : null;
 
         if (probe?.Streams == null || probe.Streams.Count == 0)
         {
-            return [];
+            return ([], [], durationSeconds);
         }
 
         var tracks = new List<EmbeddedSubtitleTrack>();
+        var skipped = new List<SkippedEmbeddedSubtitleTrack>();
         foreach (var stream in probe.Streams)
         {
             if (!TryGetSubtitleExtension(stream.CodecName, out var extension))
@@ -257,6 +409,12 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
                     stream.Index,
                     mkvPath,
                     stream.CodecName);
+                skipped.Add(new SkippedEmbeddedSubtitleTrack
+                {
+                    Index = stream.Index,
+                    CodecName = stream.CodecName ?? string.Empty,
+                    Reason = SkipReason(stream.CodecName)
+                });
                 continue;
             }
 
@@ -282,7 +440,17 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
             });
         }
 
-        return tracks;
+        return (tracks, skipped, durationSeconds);
+    }
+
+    private static string SkipReason(string? codecName)
+    {
+        if (!string.IsNullOrWhiteSpace(codecName) && ImageSubtitleCodecs.Contains(codecName.Trim()))
+        {
+            return EmbeddedSubtitleProbeResult.SkipReasonImage;
+        }
+
+        return EmbeddedSubtitleProbeResult.SkipReasonUnsupported;
     }
 
     private string MapLanguage(string? mkvLanguageTag)
@@ -396,8 +564,17 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
         return null;
     }
 
-    private static bool HasNonEmptyFile(string path) =>
-        File.Exists(path) && new FileInfo(path).Length > 0;
+    private static bool HasNonEmptyFile(string path)
+    {
+        try
+        {
+            return File.Exists(path) && new FileInfo(path).Length > 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
 
     private static void TryDeleteIncomplete(string path)
     {
@@ -412,6 +589,70 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
         {
             // Best-effort cleanup of a failed extract.
         }
+    }
+
+    private async Task<TimeSpan> GetExtractTimeoutAsync()
+    {
+        var value = await _settingService.GetSetting(SettingKeys.Translation.ExtractTimeoutMinutes);
+        return ExtractTimeout.Resolve(value);
+    }
+
+    private async Task<double?> TryProbeDurationAsync(string mkvPath, CancellationToken cancellationToken)
+    {
+        var arguments = new[]
+        {
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "json",
+            mkvPath
+        };
+
+        try
+        {
+            var result = await _processRunner.RunAsync(
+                FfmpegExecutable.Ffprobe,
+                arguments,
+                ProbeTimeout,
+                cancellationToken);
+            if (!result.Succeeded)
+            {
+                return null;
+            }
+
+            var probe = JsonSerializer.Deserialize<FfprobeOutput>(result.StandardOutput, ProbeJsonOptions);
+            return probe?.Format != null ? ParseDuration(probe.Format.Duration) : null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not probe duration for {Path}.", mkvPath);
+            return null;
+        }
+    }
+
+    private static double? ParseDuration(JsonElement duration)
+    {
+        switch (duration.ValueKind)
+        {
+            case JsonValueKind.Number when duration.TryGetDouble(out var numeric) && numeric > 0:
+                return numeric;
+            case JsonValueKind.String:
+            {
+                var text = duration.GetString();
+                if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) &&
+                    parsed > 0)
+                {
+                    return parsed;
+                }
+
+                break;
+            }
+        }
+
+        return null;
     }
 
     private static string Truncate(string? value, int maxLength = 500)
@@ -429,6 +670,15 @@ public class EmbeddedSubtitleService : IEmbeddedSubtitleService
     {
         [JsonPropertyName("streams")]
         public List<FfprobeStream>? Streams { get; set; }
+
+        [JsonPropertyName("format")]
+        public FfprobeFormat? Format { get; set; }
+    }
+
+    private sealed class FfprobeFormat
+    {
+        [JsonPropertyName("duration")]
+        public JsonElement Duration { get; set; }
     }
 
     private sealed class FfprobeStream
