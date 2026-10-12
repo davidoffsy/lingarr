@@ -1,10 +1,11 @@
-﻿import { AxiosError, AxiosResponse, AxiosStatic } from 'axios'
+import { AxiosError, AxiosResponse, AxiosStatic } from 'axios'
 import {
     IPluginManifest,
     IPluginOptionsResponse,
     IPluginStatus,
     IPluginSummary,
-    IPluginService
+    IPluginService,
+    IPluginTestConnectionResponse
 } from '@/ts'
 
 const service = (http: AxiosStatic, resource = '/api/plugin'): IPluginService => ({
@@ -45,6 +46,17 @@ const service = (http: AxiosStatic, resource = '/api/plugin'): IPluginService =>
         return new Promise((resolve, reject) => {
             http.get(endpoint)
                 .then((response: AxiosResponse<IPluginOptionsResponse>) => {
+                    resolve(response.data)
+                })
+                .catch((error: AxiosError) => {
+                    reject(error.response)
+                })
+        })
+    },
+    testConnection(provider: string): Promise<IPluginTestConnectionResponse> {
+        return new Promise((resolve, reject) => {
+            http.post(`${resource}/${provider}/test-connection`)
+                .then((response: AxiosResponse<IPluginTestConnectionResponse>) => {
                     resolve(response.data)
                 })
                 .catch((error: AxiosError) => {

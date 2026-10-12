@@ -1,4 +1,6 @@
-﻿namespace Lingarr.Contracts.Plugins;
+using Lingarr.Contracts.Models;
+
+namespace Lingarr.Contracts.Plugins;
 
 /// <summary>
 /// Describes one field a plugin needs from the user.
@@ -13,6 +15,8 @@ public sealed class PluginSettingField
     public string? Default { get; init; }
     public string? Description { get; init; }
     public string? OptionsEndpoint { get; init; }
+    public IReadOnlyList<LabelValue>? Options { get; init; }
+    public bool AllowCustom { get; init; }
     public int? MinLength { get; init; }
     public string? ValidationErrorMessage { get; init; }
 }

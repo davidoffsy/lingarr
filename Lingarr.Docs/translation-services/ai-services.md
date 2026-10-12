@@ -11,14 +11,15 @@ All AI services follow the same pattern: select the service, provide an API key,
 3. Click the gear icon on the service row to configure its credentials.
 4. Enter the API key and choose a model. Self-hosted services such as [LocalAI](#localai) also ask for an endpoint.
 
-    When a service asks for an endpoint, enter the full URL that Lingarr sends requests to, including the path. A base URL such as `http://localhost:8080` will not work.
+    When a service asks for an endpoint, LocalAI accepts a **base URL** or a full completion path.
     
-    The path also determines which protocol is used:
+    Choose a protocol in the LocalAI settings:
     
-    - An endpoint ending in `completions` uses the OpenAI-compatible chat protocol. 
-   Example: `http://ollama:11434/v1/chat/completions`.
-    - Any other endpoint uses the generate protocol.   
-   Example: `http://ollama:11434/api/generate`.
+    - **OpenAI Chat Completions** posts to `{base}/chat/completions` (adds `/v1` when the base does not already end with it). Example base: `http://ollama:11434` or `https://opencode.ai/zen/go/v1`.
+    - **Ollama Generate** posts to `{base}/api/generate`. Example base: `http://ollama:11434`.
+    - **Auto (from URL)** keeps the old behaviour for full paths: an endpoint ending in `completions` uses chat, and other explicit paths are posted as-is. A bare host such as `http://ollama:11434` (optionally with `/v1`) is completed to `{base}/api/generate`. Prefer an explicit protocol for OpenAI-compatible gateways.
+    
+    Use **Test connection** to fetch the model list (`/v1/models` or Ollama `/api/tags`) and then select a model, or type a model id.
 
 5. Optionally configure a prompt, a default one is automatically set if left empty. Customization is available by clicking the `Open Request Settings` button below the configuration.
 6. Set your source and target languages at the bottom of the page.
@@ -157,6 +158,7 @@ LocalAI works with Ollama or any other OpenAI-compatible model or router.
 |--------------------------|---------------------------------------------------------------------------------------------------------------------------|
 | `LOCAL_AI_MODEL` | The model to use for LocalAI translations.                                                                                |
 | `LOCAL_AI_API_KEY` | The API key for authenticating with LocalAI. This is optional, and only needed if the deployment requires authentication. |
-| `LOCAL_AI_ENDPOINT` | The full URL of the completion endpoint. Example: `http://ollama:11434/v1/chat/completions`.                              |
+| `LOCAL_AI_ENDPOINT` | Base URL or full completion path. Example: `http://ollama:11434` or `https://opencode.ai/zen/go/v1`.                       |
+| `LOCAL_AI_PROTOCOL` | `auto`, `openai_chat`, or `ollama_generate`. Default `auto` preserves the old URL-suffix behaviour.                       |
 | `AI_PROMPT` | The system prompt template.                                                                                               |
 | `AI_USER_PROMPT` | The user message template.                                                                                                |

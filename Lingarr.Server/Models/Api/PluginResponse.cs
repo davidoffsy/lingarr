@@ -11,4 +11,5 @@ public sealed class PluginResponse
     public string? SourceFile { get; init; }
     public required IReadOnlyList<PluginSettingField> Settings { get; init; }
     public required bool HasRequestTemplate { get; init; }
+    public bool SupportsConnectionTest { get; init; }
 }

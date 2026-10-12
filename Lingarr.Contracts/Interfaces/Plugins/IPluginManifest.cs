@@ -1,4 +1,4 @@
-﻿using Lingarr.Contracts.Plugins;
+using Lingarr.Contracts.Plugins;
 
 namespace Lingarr.Contracts.Interfaces.Plugins;
 
@@ -13,4 +13,5 @@ public interface IPluginManifest
     string? Description { get; }
     IReadOnlyList<PluginSettingField> Settings { get; }
     bool HasRequestTemplate => false;
+    bool SupportsConnectionTest => false;
 }

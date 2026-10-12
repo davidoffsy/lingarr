@@ -1,4 +1,5 @@
-﻿using Lingarr.Contracts.Interfaces.Plugins;
+using Lingarr.Contracts.Interfaces.Plugins;
+using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Plugins;
 using Lingarr.Core.Configuration;
 
@@ -11,9 +12,11 @@ public sealed class LocalAiPluginManifest : IPluginManifest
     public string DisplayName => "LocalAI / Ollama";
 
     public string? Description =>
-        "Self-hosted OpenAI-compatible or Ollama-compatible deployments. The endpoint determines whether the chat/completions or the generate protocol is used; the API key is optional. Addresses usually consist of a path such as <code>/v1/chat/completions</code> or <code>/api/generate</code> and should follow the <a href='https://platform.openai.com/docs/api-reference/chat/create' target='_blank' rel='noopener'>OpenAI API specification</a>.";
+        "Self-hosted or OpenAI-compatible deployments (Ollama, vLLM, OpenRouter, OpenCode Go, and similar gateways). Choose a protocol, then enter a base URL such as <code>http://ollama:11434</code> or <code>https://opencode.ai/zen/go/v1</code>. Full paths like <code>/v1/chat/completions</code> are still accepted. Use <strong>Test connection</strong> to load the model list.";
 
     public bool HasRequestTemplate => true;
+
+    public bool SupportsConnectionTest => true;
 
     public IReadOnlyList<PluginSettingField> Settings { get; } =
     [
@@ -23,17 +26,23 @@ public sealed class LocalAiPluginManifest : IPluginManifest
             Label = "Address",
             Type = PluginSettingType.Url,
             Required = true,
-            Default = "http://ollama:11434/v1/chat/completions",
-            Description = "Full URL to the chat/completions or generate endpoint. Ending in 'completions' selects the OpenAI-compatible path."
+            Default = "http://ollama:11434",
+            Description = "Base URL or full completion path. With an explicit protocol, a base URL is enough."
         },
         new()
         {
-            Key = SettingKeys.Translation.LocalAi.Model,
-            Label = "AI Model",
-            Type = PluginSettingType.Text,
+            Key = SettingKeys.Translation.LocalAi.Protocol,
+            Label = "Protocol",
+            Type = PluginSettingType.Dropdown,
             Required = true,
-            Default = "aya-expanse",
-            Description = "Model identifier the deployment exposes."
+            Default = SettingKeys.Translation.LocalAi.Protocols.Auto,
+            Description = "Auto keeps the old URL-suffix behaviour. Prefer OpenAI Chat Completions for OpenAI-compatible gateways.",
+            Options =
+            [
+                new LabelValue { Label = "Auto (from URL)", Value = SettingKeys.Translation.LocalAi.Protocols.Auto },
+                new LabelValue { Label = "OpenAI Chat Completions", Value = SettingKeys.Translation.LocalAi.Protocols.OpenAiChat },
+                new LabelValue { Label = "Ollama Generate", Value = SettingKeys.Translation.LocalAi.Protocols.OllamaGenerate }
+            ]
         },
         new()
         {
@@ -42,6 +51,16 @@ public sealed class LocalAiPluginManifest : IPluginManifest
             Type = PluginSettingType.Secret,
             Required = false,
             Description = "Bearer token if the deployment requires authentication. Stored encrypted."
+        },
+        new()
+        {
+            Key = SettingKeys.Translation.LocalAi.Model,
+            Label = "AI Model",
+            Type = PluginSettingType.RemoteDropdown,
+            Required = true,
+            AllowCustom = true,
+            OptionsEndpoint = "/api/plugin/localai/models",
+            Description = "Test the connection to load models, then select one or type a model id."
         }
     ];
 }

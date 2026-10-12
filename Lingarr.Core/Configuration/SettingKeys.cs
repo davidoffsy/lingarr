@@ -39,8 +39,16 @@ public static class SettingKeys
             public const string Model = "local_ai_model";
             public const string Endpoint = "local_ai_endpoint";
             public const string ApiKey = "local_ai_api_key";
+            public const string Protocol = "local_ai_protocol";
             public const string ChatRequestTemplate = "local_ai_chat_request_template";
             public const string GenerateRequestTemplate = "local_ai_generate_request_template";
+
+            public static class Protocols
+            {
+                public const string Auto = "auto";
+                public const string OpenAiChat = "openai_chat";
+                public const string OllamaGenerate = "ollama_generate";
+            }
         }
 
         public static class DeepL

@@ -20,6 +20,7 @@ import {
     IPluginOptionsResponse,
     IPluginStatus,
     IPluginSummary,
+    IPluginTestConnectionResponse,
     IProofreadLineApplyRequest,
     IProofreadLineRequest
 } from '@/ts'
@@ -47,6 +48,7 @@ export interface IPluginService {
     getManifest(provider: string): Promise<IPluginManifest>
     getStatus(provider: string): Promise<IPluginStatus>
     getOptions(endpoint: string): Promise<IPluginOptionsResponse>
+    testConnection(provider: string): Promise<IPluginTestConnectionResponse>
 }
 
 export interface IAuthService {

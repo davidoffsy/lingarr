@@ -11,6 +11,21 @@ import {
 import services from '@/services'
 import { useInstanceStore } from '@/store/instance'
 
+let pendingSaveCount = 0
+const pendingSaveWaiters: Array<() => void> = []
+
+function beginSave(): void {
+    pendingSaveCount += 1
+}
+
+function endSave(): void {
+    pendingSaveCount = Math.max(0, pendingSaveCount - 1)
+    if (pendingSaveCount === 0) {
+        const waiters = pendingSaveWaiters.splice(0)
+        waiters.forEach((resolve) => resolve())
+    }
+}
+
 export const useSettingStore = defineStore('setting', {
     state: (): IUseSettingStore => ({
         settings: {} as ISettings,
@@ -42,9 +57,19 @@ export const useSettingStore = defineStore('setting', {
             if (isValid) {
                 if (isJson) {
                     if (!allKeysHaveValues(value)) return
-                    await this.saveSetting(key, JSON.stringify(value))
+                    beginSave()
+                    try {
+                        await this.saveSetting(key, JSON.stringify(value))
+                    } finally {
+                        endSave()
+                    }
                 } else {
-                    await this.saveSetting(key, value as string)
+                    beginSave()
+                    try {
+                        await this.saveSetting(key, value as string)
+                    } finally {
+                        endSave()
+                    }
                 }
             }
         },
@@ -55,8 +80,27 @@ export const useSettingStore = defineStore('setting', {
         ): Promise<void> {
             this.encrypted_settings[key] = value
             if (isValid) {
-                await services.setting.setEncryptedSetting(key, value)
+                beginSave()
+                try {
+                    await services.setting.setEncryptedSetting(key, value)
+                } finally {
+                    endSave()
+                }
             }
+        },
+        async waitForPendingSaves(timeoutMs = 5000): Promise<void> {
+            if (pendingSaveCount === 0) {
+                return
+            }
+
+            await Promise.race([
+                new Promise<void>((resolve) => {
+                    pendingSaveWaiters.push(resolve)
+                }),
+                new Promise<void>((resolve) => {
+                    window.setTimeout(resolve, timeoutMs)
+                })
+            ])
         },
         storeSetting(key: keyof ISettings, value: string | boolean | unknown[]) {
             this.settings[key] = value as never

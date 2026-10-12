@@ -67,6 +67,9 @@ Do not use these plugin identifiers (they are used by built-in providers):
 - Use snake_case keys with a namespace (example: `myprovider_api_key`).
 - Settings defined in your manifest are automatically added when the plugin loads.
 - PluginSettingType.Secret fields are encrypted.
+- PluginSettingType.Dropdown renders a static list from `Options`.
+- PluginSettingType.RemoteDropdown loads options from `OptionsEndpoint`. Set `AllowCustom` to also show a free-text field.
+- Set `SupportsConnectionTest` to add a Test connection button that probes `GetModels()` after the connection fields.
 - To read settings, inject `Lingarr.Contracts.Settings.ISettingsAccess` in your constructor.
 - Plugins can only read settings, they cannot write them.
 

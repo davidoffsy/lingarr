@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <CardComponent title="AI Request Body Template">
         <template #description>
             Customize the JSON structure sent to your AI provider. Placeholders are replaced across
@@ -82,7 +82,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { PLACEHOLDER, SETTINGS, SERVICE_TYPE, ISettings } from '@/ts'
+import { PLACEHOLDER, SETTINGS, SERVICE_TYPE, LOCAL_AI_PROTOCOLS, ISettings } from '@/ts'
 import { useSettingStore } from '@/store/setting'
 import useDebounce from '@/composables/useDebounce'
 import services from '@/services'
@@ -137,7 +137,16 @@ const templateMap: Record<string, keyof ISettings> = {
 const localAiEndpoint = computed(
     () => settingsStore.getSetting(SETTINGS.LOCAL_AI_ENDPOINT) as string
 )
+const localAiProtocol = computed(
+    () => settingsStore.getSetting(SETTINGS.LOCAL_AI_PROTOCOL) as string
+)
 const isLocalAiGenerate = computed(() => {
+    if (localAiProtocol.value === LOCAL_AI_PROTOCOLS.OPENAI_CHAT) {
+        return false
+    }
+    if (localAiProtocol.value === LOCAL_AI_PROTOCOLS.OLLAMA_GENERATE) {
+        return true
+    }
     const endpoint = localAiEndpoint.value || ''
     return !endpoint.trimEnd().replace(/\/$/, '').endsWith('completions')
 })

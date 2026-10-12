@@ -1,8 +1,9 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
+using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Models.Batch;
 using Lingarr.Contracts.Translation;
 using Lingarr.Core.Configuration;
@@ -10,6 +11,7 @@ using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models.Integrations.Translation;
 using Lingarr.Server.Services.Translation.Base;
+using Lingarr.Server.Services.Translation.LocalAi;
 
 namespace Lingarr.Server.Services.Translation;
 
@@ -65,6 +67,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             var settings = await _settings.GetSettings([
                 SettingKeys.Translation.LocalAi.Model,
                 SettingKeys.Translation.LocalAi.Endpoint,
+                SettingKeys.Translation.LocalAi.Protocol,
                 SettingKeys.Translation.LocalAi.ChatRequestTemplate,
                 SettingKeys.Translation.LocalAi.GenerateRequestTemplate,
                 SettingKeys.Translation.AiPrompt,
@@ -96,7 +99,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             _userPrompt = settings[SettingKeys.Translation.AiUserPrompt];
             _proofreadPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadPrompt);
             _proofreadUserPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadUserPrompt);
-            _isChatEndpoint = _endpoint.TrimEnd('/').EndsWith("completions", StringComparison.OrdinalIgnoreCase);
+            settings.TryGetValue(SettingKeys.Translation.LocalAi.Protocol, out var protocolSetting);
+            var resolved = LocalAiEndpointResolver.ResolveCompletionEndpoint(
+                _endpoint,
+                LocalAiProtocolParser.Parse(protocolSetting));
+            _endpoint = resolved.Url;
+            _isChatEndpoint = resolved.IsChat;
 
             var requestTimeout = int.TryParse(settings[SettingKeys.Translation.RequestTimeout],
                 out var timeOut)
@@ -632,5 +640,22 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         }
 
         return chatResponse.Choices[0].Message.Content;
+    }
+
+    /// <inheritdoc />
+    public override async Task<ModelsResponse> GetModels()
+    {
+        var endpoint = await _settings.GetSetting(SettingKeys.Translation.LocalAi.Endpoint);
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            return new ModelsResponse
+            {
+                Message = "LocalAI endpoint is not configured."
+            };
+        }
+
+        var protocol = await _settings.GetSetting(SettingKeys.Translation.LocalAi.Protocol);
+        var apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.LocalAi.ApiKey);
+        return await LocalAiModelCatalog.FetchAsync(_httpClient, endpoint, protocol, apiKey);
     }
 }

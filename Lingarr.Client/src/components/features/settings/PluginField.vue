@@ -14,6 +14,26 @@
                 :no-options="remoteError ?? 'Loading options...'"
                 @update:selected="(value: string) => (fieldValue = value)"
                 @fetch-options="loadRemoteOptions" />
+            <InputComponent
+                v-if="field.allowCustom"
+                :id="`${field.key}-custom`"
+                v-model="fieldValue"
+                :type="INPUT_TYPE.TEXT"
+                class="mt-2"
+                placeholder="Or type a model id"
+                :debounce="saveImmediately ? 0 : undefined" />
+        </template>
+        <template v-else-if="field.type === PLUGIN_SETTING_TYPE.DROPDOWN">
+            <label class="mb-1 block text-sm font-semibold" :for="field.key">
+                {{ field.label }}
+                <span v-if="field.required" class="text-red-500" aria-hidden="true">*</span>
+            </label>
+            <SelectComponent
+                :options="field.options ?? []"
+                :selected="fieldValue"
+                placeholder="Select option..."
+                no-options="No options configured."
+                @update:selected="(value: string) => (fieldValue = value)" />
         </template>
         <InputComponent
             v-else
@@ -25,6 +45,7 @@
             :validation-type="validationType"
             :min-length="field.minLength ?? undefined"
             :error-message="field.validationErrorMessage ?? undefined"
+            :debounce="saveImmediately ? 0 : undefined"
             @update:validation="(value: boolean) => (isValid = value)" />
         <div v-if="field.description" class="mt-1 text-xs opacity-60">
             {{ field.description }}
@@ -33,7 +54,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, inject, ref, watch, type Ref } from 'vue'
 import {
     IEncryptedSettings,
     INPUT_TYPE,
@@ -57,6 +78,8 @@ const props = defineProps<{
 const emit = defineEmits(['save'])
 
 const settingsStore = useSettingStore()
+const testedModelOptions = inject<Ref<LabelValue[]>>('testedModelOptions', ref([]))
+const saveImmediately = inject('saveImmediately', false)
 
 const isValid = ref<boolean>(
     props.field.minLength == null && props.field.type !== PLUGIN_SETTING_TYPE.URL
@@ -94,24 +117,42 @@ const fieldValue = computed<string>({
         return props.field.default ?? ''
     },
     set: (newValue: string): void => {
-        if (props.field.type === PLUGIN_SETTING_TYPE.SECRET) {
-            settingsStore.updateEncryptedSetting(
-                props.field.key as keyof IEncryptedSettings,
-                newValue,
-                isValid.value
-            )
-        } else {
-            settingsStore.updateSetting(
-                props.field.key as keyof ISettings,
-                newValue,
-                isValid.value
-            )
-        }
-        if (isValid.value) {
-            emit('save')
-        }
+        void persist(newValue)
     }
 })
+
+async function persist(newValue: string): Promise<void> {
+    if (props.field.type === PLUGIN_SETTING_TYPE.SECRET) {
+        await settingsStore.updateEncryptedSetting(
+            props.field.key as keyof IEncryptedSettings,
+            newValue,
+            isValid.value
+        )
+    } else {
+        await settingsStore.updateSetting(
+            props.field.key as keyof ISettings,
+            newValue,
+            isValid.value
+        )
+    }
+    if (isValid.value) {
+        emit('save')
+    }
+}
+
+watch(
+    testedModelOptions,
+    (options) => {
+        if (props.field.type !== PLUGIN_SETTING_TYPE.REMOTE_DROPDOWN) {
+            return
+        }
+        remoteOptions.value = options
+        if (options.length > 0) {
+            remoteError.value = null
+        }
+    },
+    { deep: true }
+)
 
 async function loadRemoteOptions(): Promise<void> {
     if (!props.field.optionsEndpoint) {

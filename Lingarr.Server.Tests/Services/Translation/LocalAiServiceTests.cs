@@ -135,6 +135,86 @@ public class LocalAiServiceTests
         VerifyRequestsSent(1);
     }
 
+    [Fact]
+    public async Task TranslateAsync_OpenAiChatProtocol_PostsToChatCompletions()
+    {
+        UseSettings("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
+        SetupResponse(() => ChatResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestUri("https://opencode.ai/zen/go/v1/chat/completions", Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_AutoBareHost_PostsToGenerate()
+    {
+        UseSettings("http://localhost:11434", SettingKeys.Translation.LocalAi.Protocols.Auto);
+        SetupResponse(() => GenerateResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestUri("http://localhost:11434/api/generate", Times.Once());
+    }
+
+    [Fact]
+    public async Task GetModels_OpenAiChat_ReturnsCatalogue()
+    {
+        SetupGetSetting("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
+        SetupResponse(() => JsonResponse(new { data = new[] { new { id = "omen-alpha" }, new { id = "glm-5.2" } } }));
+
+        var result = await _service.GetModels();
+
+        Assert.Null(result.Message);
+        Assert.Equal(2, result.Options.Count);
+        Assert.Contains(result.Options, option => option.Value == "omen-alpha");
+        VerifyRequestUri("https://opencode.ai/zen/go/v1/models", Times.Once());
+    }
+
+    [Fact]
+    public async Task GetModels_OllamaGenerate_ReturnsTags()
+    {
+        SetupGetSetting("http://localhost:11434", SettingKeys.Translation.LocalAi.Protocols.OllamaGenerate);
+        SetupResponse(() => JsonResponse(new { models = new[] { new { name = "llama3:latest" } } }));
+
+        var result = await _service.GetModels();
+
+        Assert.Equal("llama3:latest", result.Options[0].Value);
+        VerifyRequestUri("http://localhost:11434/api/tags", Times.Once());
+    }
+
+    [Fact]
+    public async Task GetModels_HtmlNotFound_ReturnsFriendlyMessage()
+    {
+        SetupGetSetting("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.Auto);
+        SetupResponse(() => new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.NotFound,
+            Content = new StringContent("<html>404 - Page Not Found</html>", Encoding.UTF8, "text/html")
+        });
+
+        var result = await _service.GetModels();
+
+        Assert.NotNull(result.Message);
+        Assert.Contains("OpenAI Chat Completions", result.Message);
+        Assert.DoesNotContain("<html>", result.Message);
+        Assert.Empty(result.Options);
+    }
+
+    [Fact]
+    public async Task GetModels_OpenAiChat_EmptyCatalogue_IsSuccess()
+    {
+        SetupGetSetting("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
+        SetupResponse(() => JsonResponse(new { data = Array.Empty<object>() }));
+
+        var result = await _service.GetModels();
+
+        Assert.Null(result.Message);
+        Assert.Empty(result.Options);
+    }
+
     private static List<BatchSubtitleItem> Batch() =>
     [
         new() { Position = 1, Line = "Hello" },
@@ -153,7 +233,7 @@ public class LocalAiServiceTests
         Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
     };
 
-    private void UseSettings(string endpoint)
+    private void UseSettings(string endpoint, string? protocol = null)
     {
         var settings = new Dictionary<string, string>
         {
@@ -170,8 +250,21 @@ public class LocalAiServiceTests
             { SettingKeys.Translation.LanguageCodeFormat, "false" }
         };
 
+        if (!string.IsNullOrEmpty(protocol))
+        {
+            settings[SettingKeys.Translation.LocalAi.Protocol] = protocol;
+        }
+
         _settingsMock.Setup(settingService => settingService.GetSettings(It.IsAny<IEnumerable<string>>()))
             .ReturnsAsync(settings);
+    }
+
+    private void SetupGetSetting(string endpoint, string protocol)
+    {
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.LocalAi.Endpoint))
+            .ReturnsAsync(endpoint);
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.LocalAi.Protocol))
+            .ReturnsAsync(protocol);
     }
 
     /// <summary>
@@ -208,6 +301,15 @@ public class LocalAiServiceTests
             "SendAsync",
             Times.Exactly(count),
             ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    private void VerifyRequestUri(string expectedUri, Times times)
+    {
+        _httpMessageHandlerMock.Protected().Verify(
+            "SendAsync",
+            times,
+            ItExpr.Is<HttpRequestMessage>(request => request.RequestUri!.ToString() == expectedUri),
             ItExpr.IsAny<CancellationToken>());
     }
 

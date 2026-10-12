@@ -1,4 +1,4 @@
-﻿using Lingarr.Contracts.Models;
+using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Plugins;
 using Lingarr.Server.Attributes;
 using Lingarr.Server.Interfaces.Services;
@@ -99,6 +99,42 @@ public class PluginController : ControllerBase
     }
 
     /// <summary>
+    /// Probes the provider by fetching its model catalogue. Used by the settings "Test connection" button.
+    /// </summary>
+    [HttpPost("{provider}/test-connection")]
+    public async Task<ActionResult<PluginTestConnectionResponse>> TestConnection(string provider)
+    {
+        var plugin = _registry.Find(provider);
+        if (plugin is null)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            var translationService = _translationServiceFactory.CreateTranslationService(plugin.Manifest.Provider);
+            var models = await translationService.GetModels();
+            return Ok(PluginTestConnectionResponse.FromModels(models));
+        }
+        catch (ArgumentException)
+        {
+            return NotFound();
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                exception,
+                "Failed to test connection for provider {Provider}.",
+                plugin.Manifest.Provider);
+            return Ok(new PluginTestConnectionResponse
+            {
+                Success = false,
+                Message = "Error testing connection: " + exception.Message
+            });
+        }
+    }
+
+    /// <summary>
     /// Returns the configuration status for a provider.
     /// </summary>
     [HttpGet("{provider}/status")]
@@ -152,7 +188,8 @@ public class PluginController : ControllerBase
             IsBuiltIn = plugin.IsBuiltIn,
             SourceFile = plugin.SourceFile,
             Settings = plugin.Manifest.Settings,
-            HasRequestTemplate = plugin.Manifest.HasRequestTemplate
+            HasRequestTemplate = plugin.Manifest.HasRequestTemplate,
+            SupportsConnectionTest = plugin.Manifest.SupportsConnectionTest
         };
     }
 }

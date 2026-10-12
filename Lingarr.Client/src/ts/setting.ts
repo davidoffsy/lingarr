@@ -1,6 +1,12 @@
 import { ILanguage } from '@/ts/language'
 import { ILocale, ITheme } from '@/ts/store'
 
+export const LOCAL_AI_PROTOCOLS = {
+    AUTO: 'auto',
+    OPENAI_CHAT: 'openai_chat',
+    OLLAMA_GENERATE: 'ollama_generate'
+} as const
+
 export const SETTINGS = {
     RADARR_URL: 'radarr_url',
     SONARR_URL: 'sonarr_url',
@@ -20,6 +26,7 @@ export const SETTINGS = {
     ANTHROPIC_VERSION: 'anthropic_version',
     LOCAL_AI_ENDPOINT: 'local_ai_endpoint',
     LOCAL_AI_MODEL: 'local_ai_model',
+    LOCAL_AI_PROTOCOL: 'local_ai_protocol',
     GEMINI_MODEL: 'gemini_model',
     DEEPSEEK_MODEL: 'deepseek_model',
     MISTRAL_MODEL: 'mistral_model',
@@ -94,6 +101,7 @@ export interface ISettings {
     anthropic_version: string
     local_ai_endpoint: string
     local_ai_model: string
+    local_ai_protocol: string
     gemini_model: string
     deepseek_model: string
     mistral_model: string
