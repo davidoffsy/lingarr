@@ -11,8 +11,10 @@ using Lingarr.Contracts.Models.Batch;
 using Lingarr.Core.Configuration;
 using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
+using Lingarr.Core;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.LocalAi;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Moq.Protected;
@@ -148,6 +150,101 @@ public class LocalAiServiceTests
     }
 
     [Fact]
+    public async Task TranslateAsync_OpenCodeGo_SendsUserAgentAndStableSession()
+    {
+        UseSettings("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
+        var captured = CaptureRequests(() => ChatResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+        await _service.TranslateAsync("World", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal(2, captured.Count);
+        var firstSession = HeaderValue(captured[0], OpenCodeGoHeaders.SessionHeaderName);
+        var secondSession = HeaderValue(captured[1], OpenCodeGoHeaders.SessionHeaderName);
+        Assert.False(string.IsNullOrWhiteSpace(firstSession));
+        Assert.Equal(firstSession, secondSession);
+        Assert.Equal($"{LingarrVersion.Name}/{LingarrVersion.Number}", HeaderValue(captured[0], "User-Agent"));
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Ollama_DoesNotSendOpenCodeSession()
+    {
+        UseSettings(GenerateEndpoint);
+        var captured = CaptureRequests(() => GenerateResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        Assert.Single(captured);
+        Assert.Null(HeaderValue(captured[0], OpenCodeGoHeaders.SessionHeaderName));
+        Assert.Equal($"{LingarrVersion.Name}/{LingarrVersion.Number}", HeaderValue(captured[0], "User-Agent"));
+    }
+
+    [Fact]
+    public async Task GetModels_OpenCodeGo_SendsSessionHeader()
+    {
+        SetupGetSetting("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
+        var captured = CaptureRequests(() => JsonResponse(new { data = new[] { new { id = "glm-5.2" } } }));
+
+        var result = await _service.GetModels();
+
+        Assert.Null(result.Message);
+        Assert.Single(captured);
+        Assert.False(string.IsNullOrWhiteSpace(HeaderValue(captured[0], OpenCodeGoHeaders.SessionHeaderName)));
+        Assert.Equal($"{LingarrVersion.Name}/{LingarrVersion.Number}", HeaderValue(captured[0], "User-Agent"));
+    }
+
+    [Fact]
+    public async Task GetModels_Ollama_DoesNotSendOpenCodeSession()
+    {
+        SetupGetSetting("http://localhost:11434", SettingKeys.Translation.LocalAi.Protocols.OllamaGenerate);
+        var captured = CaptureRequests(() => JsonResponse(new { models = new[] { new { name = "llama3:latest" } } }));
+
+        var result = await _service.GetModels();
+
+        Assert.Equal("llama3:latest", result.Options[0].Value);
+        Assert.Single(captured);
+        Assert.Null(HeaderValue(captured[0], OpenCodeGoHeaders.SessionHeaderName));
+        Assert.Equal($"{LingarrVersion.Name}/{LingarrVersion.Number}", HeaderValue(captured[0], "User-Agent"));
+    }
+
+    [Fact]
+    public async Task TranslateAsync_WithApiKey_SendsBearerAuthorization()
+    {
+        const string apiKey = "sk-test-key";
+        _settingsMock.Setup(settingService => settingService.GetEncryptedSetting(SettingKeys.Translation.LocalAi.ApiKey))
+            .ReturnsAsync("  " + apiKey + " \n");
+        UseSettings("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
+        SetupResponse(() => ChatResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyAuthorization("Bearer " + apiKey, Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Unauthorized_DoesNotRetry()
+    {
+        UseSettings("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
+        SetupResponse(() => new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.Unauthorized,
+            Content = new StringContent(
+                "{\"type\":\"error\",\"error\":{\"type\":\"AuthError\",\"message\":\"Missing API key.\"}}",
+                Encoding.UTF8,
+                "application/json")
+        });
+
+        var exception = await Assert.ThrowsAsync<TranslationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        Assert.Contains("Unauthorized", exception.Message);
+        Assert.Contains("Missing API key", exception.Message);
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
     public async Task TranslateAsync_AutoBareHost_PostsToGenerate()
     {
         UseSettings("http://localhost:11434", SettingKeys.Translation.LocalAi.Protocols.Auto);
@@ -171,6 +268,20 @@ public class LocalAiServiceTests
         Assert.Equal(2, result.Options.Count);
         Assert.Contains(result.Options, option => option.Value == "omen-alpha");
         VerifyRequestUri("https://opencode.ai/zen/go/v1/models", Times.Once());
+    }
+
+    [Fact]
+    public async Task GetModels_WithApiKey_SendsBearerAuthorization()
+    {
+        _settingsMock.Setup(settingService => settingService.GetEncryptedSetting(SettingKeys.Translation.LocalAi.ApiKey))
+            .ReturnsAsync("sk-test-key");
+        SetupGetSetting("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
+        SetupResponse(() => JsonResponse(new { data = new[] { new { id = "hy4-preview" } } }));
+
+        var result = await _service.GetModels();
+
+        Assert.Equal("hy4-preview", result.Options[0].Value);
+        VerifyAuthorization("Bearer sk-test-key", Times.Once());
     }
 
     [Fact]
@@ -281,6 +392,34 @@ public class LocalAiServiceTests
             .Returns(() => Task.FromResult(responseFactory()));
     }
 
+    private List<HttpRequestMessage> CaptureRequests(Func<HttpResponseMessage> responseFactory)
+    {
+        var captured = new List<HttpRequestMessage>();
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) => captured.Add(request))
+            .Returns(() => Task.FromResult(responseFactory()));
+        return captured;
+    }
+
+    private static string? HeaderValue(HttpRequestMessage request, string name)
+    {
+        if (!request.Headers.TryGetValues(name, out var values))
+        {
+            return null;
+        }
+
+        foreach (var value in values)
+        {
+            return value;
+        }
+
+        return null;
+    }
+
     private void SetupResponseSequence(params HttpResponseMessage[] responses)
     {
         var sequence = _httpMessageHandlerMock.Protected()
@@ -311,6 +450,31 @@ public class LocalAiServiceTests
             times,
             ItExpr.Is<HttpRequestMessage>(request => request.RequestUri!.ToString() == expectedUri),
             ItExpr.IsAny<CancellationToken>());
+    }
+
+    private void VerifyAuthorization(string expectedHeader, Times times)
+    {
+        _httpMessageHandlerMock.Protected().Verify(
+            "SendAsync",
+            times,
+            ItExpr.Is<HttpRequestMessage>(request => HasAuthorization(request, expectedHeader)),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    private static bool HasAuthorization(HttpRequestMessage request, string expectedHeader)
+    {
+        if (request.Headers.TryGetValues("Authorization", out var values))
+        {
+            foreach (var value in values)
+            {
+                if (value == expectedHeader)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return request.Headers.Authorization?.ToString() == expectedHeader;
     }
 
     private void VerifyWarningLogged(string message, Times times)

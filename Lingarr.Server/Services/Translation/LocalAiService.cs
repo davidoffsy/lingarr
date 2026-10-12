@@ -1,6 +1,4 @@
 using System.Net;
-using System.Net.Http.Headers;
-using System.Text;
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Models;
@@ -21,11 +19,13 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     private readonly IRequestTemplateService _requestTemplateService;
     private string? _model;
     private string? _endpoint;
+    private string? _apiKey;
     private string? _chatRequestTemplate;
     private string? _generateRequestTemplate;
     private bool _isChatEndpoint;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
+    private readonly string _sessionId = OpenCodeGoHeaders.NewSessionId();
 
     /// <inheritdoc />
     public override string? ModelName => _model;
@@ -115,9 +115,11 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
 
             var apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.LocalAi.ApiKey);
-            if (!string.IsNullOrEmpty(apiKey))
+            _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
+            if (string.IsNullOrEmpty(_apiKey) && _isChatEndpoint)
             {
-                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                _logger.LogWarning(
+                    "LocalAI API key is not configured. Authenticated OpenAI-compatible gateways will reject chat completions.");
             }
 
             _maxRetries = int.TryParse(settings[SettingKeys.Translation.MaxRetries], out var maxRetries) 
@@ -173,8 +175,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
-                    "429 Too Many Requests. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "Transient LocalAI error. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
                     delay, attempt, _maxRetries);
+            }
+            catch (TranslationException)
+            {
+                throw;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -223,8 +229,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
-                    "429 Too Many Requests. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "Transient LocalAI error. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
                     delay, attempt, _maxRetries);
+            }
+            catch (TranslationException)
+            {
+                throw;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -247,6 +257,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         return _isChatEndpoint
             ? await TranslateWithChatApi(replacements, cancellationToken)
             : await TranslateWithGenerateApi(replacements, cancellationToken);
+    }
+
+    private async Task<HttpResponseMessage> PostJsonAsync(string jsonBody, CancellationToken cancellationToken)
+    {
+        using var request = LocalAiHttp.CreateJsonPost(_endpoint!, jsonBody, _apiKey, _sessionId);
+        return await _httpClient.SendAsync(request, cancellationToken);
     }
 
     /// <summary>
@@ -396,12 +412,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             ["response_format"] = responseFormat
         });
 
-        var requestContent = new StringContent(
-            bodyJson,
-            Encoding.UTF8,
-            "application/json");
-
-        var response = await _httpClient.PostAsync(_endpoint, requestContent, cancellationToken);
+        var response = await PostJsonAsync(bodyJson, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -455,12 +466,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
 
-        var requestContent = new StringContent(
-            bodyJson,
-            Encoding.UTF8,
-            "application/json");
-
-        var response = await _httpClient.PostAsync(_endpoint, requestContent, cancellationToken);
+        var response = await PostJsonAsync(bodyJson, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -524,10 +530,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             ["stream"] = false
         });
 
-        var content = new StringContent(bodyJson,
-            Encoding.UTF8, "application/json");
-
-        var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken);
+        var response = await PostJsonAsync(bodyJson, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -580,12 +583,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         CancellationToken cancellationToken)
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(_generateRequestTemplate!, replacements);
-
-
-        var content = new StringContent(bodyJson,
-            Encoding.UTF8, "application/json");
-
-        var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken);
+        var response = await PostJsonAsync(bodyJson, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -612,12 +610,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         CancellationToken cancellationToken)
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-        
-
-               var content = new StringContent(bodyJson,
-            Encoding.UTF8, "application/json");
-
-        var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken);
+        var response = await PostJsonAsync(bodyJson, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -627,8 +620,13 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 _endpoint, 
                 response.StatusCode, 
                 responseContent);
-            throw new TranslationResponseException(
-                $"LocalAI chat API request failed with status {response.StatusCode}: {responseContent}");
+            var error = $"LocalAI chat API request failed with status {response.StatusCode}: {responseContent}";
+            if (LocalAiHttp.IsTransient(response.StatusCode))
+            {
+                throw new TranslationResponseException(error);
+            }
+
+            throw new TranslationException(error);
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);

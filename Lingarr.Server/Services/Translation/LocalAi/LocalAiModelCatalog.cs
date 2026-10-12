@@ -25,10 +25,8 @@ public static class LocalAiModelCatalog
 
             using var request = new HttpRequestMessage(HttpMethod.Get, modelsUrl);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            if (!string.IsNullOrEmpty(apiKey))
-            {
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-            }
+            LocalAiHttp.ApplyBearer(request, apiKey);
+            LocalAiHttp.ApplyClientHeaders(request);
 
             using var response = await httpClient.SendAsync(request, timeout.Token);
             if (!response.IsSuccessStatusCode)
