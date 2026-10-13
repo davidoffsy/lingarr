@@ -219,6 +219,7 @@ public static class ServiceCollectionExtensions
         builder.Services.AddScoped<IStatisticsService, StatisticsService>();
         builder.Services.AddScoped<ITelemetryService, TelemetryService>();
         builder.Services.AddScoped<ILingarrApiService, LingarrApiService>();
+        builder.Services.AddHttpClient<ILatestReleaseService, GitHubLatestReleaseService>();
 
         // Add Sync services
         builder.Services.AddScoped<IShowSyncService, ShowSyncService>();

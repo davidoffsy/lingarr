@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Lingarr.Core;
 using Lingarr.Core.Models;
 using Lingarr.Server.Attributes;
@@ -12,11 +12,11 @@ namespace Lingarr.Server.Controllers;
 [Route("api/[controller]")]
 public class VersionController : ControllerBase
 {
-    private readonly ILingarrApiService _lingarrApiService;
+    private readonly ILatestReleaseService _latestReleaseService;
 
-    public VersionController(ILingarrApiService lingarrApiService)
+    public VersionController(ILatestReleaseService latestReleaseService)
     {
-        _lingarrApiService = lingarrApiService;
+        _latestReleaseService = latestReleaseService;
     }
 
     /// <summary>
@@ -29,7 +29,7 @@ public class VersionController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<VersionInfo>> Get()
     {
-        var versionInfo = await LingarrVersion.CheckForUpdates(_lingarrApiService);
-        return Ok(versionInfo);
+        var latestVersion = await _latestReleaseService.GetLatestVersion();
+        return Ok(LingarrVersion.CheckForUpdates(latestVersion));
     }
 }

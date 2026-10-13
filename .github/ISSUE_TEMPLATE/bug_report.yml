@@ -13,8 +13,8 @@ body:
     id: version
     attributes:
       label: Lingarr version
-      description: Which version are you running? Check the footer of the Lingarr UI or your Docker image tag. Use a released version (for example `1.2.4`).
-      placeholder: 1.2.4
+      description: Which version are you running? Check the footer of the Lingarr UI or your Docker image tag. Use a released version (for example `0.1.0`).
+      placeholder: 0.1.0
     validations:
       required: true
 

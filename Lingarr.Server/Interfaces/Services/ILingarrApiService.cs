@@ -8,12 +8,6 @@ namespace Lingarr.Server.Interfaces.Services;
 public interface ILingarrApiService
 {
     /// <summary>
-    /// Gets the latest recommended version from Lingarr API
-    /// </summary>
-    /// <returns>Version string or null if unavailable</returns>
-    Task<string?> GetLatestVersion();
-
-    /// <summary>
     /// Submits telemetry data to Lingarr API
     /// </summary>
     /// <param name="payload">Telemetry payload to submit</param>

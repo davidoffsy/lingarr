@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using Lingarr.Core.Models;
 
@@ -7,6 +7,8 @@ namespace Lingarr.Core;
 public static class LingarrVersion
 {
     public const string Name = "Lingarr";
+
+    public const string GitHubRepository = "davidoffsy/lingarr-support-mkv";
 
     public static readonly string Number = GetCurrentVersion();
 
@@ -42,41 +44,50 @@ public static class LingarrVersion
         return buildMetadataStart < 0 ? version : version[..buildMetadataStart];
     }
 
-    public static async Task<VersionInfo> CheckForUpdates(object? lingarrApiService = null)
+    public static VersionInfo CheckForUpdates(string? latestVersion = null)
     {
-        var latestVersion = Number;
-        var isDevelopment = !Version.TryParse(Number, out var current);
+        return Compare(Number, latestVersion);
+    }
 
-        try
-        {
-            var method = lingarrApiService?.GetType().GetMethod("GetLatestVersion");
-            if (method != null)
-            {
-                if (method.Invoke(lingarrApiService, null) is Task<string?> task)
-                {
-                    var version = await task;
-                    if (!string.IsNullOrEmpty(version))
-                    {
-                        latestVersion = version;
-                    }
-                }
-            }
-        }
-        catch (Exception)
-        {
-            Console.WriteLine("Failed to get latest version");
-        }
+    public static VersionInfo Compare(string currentVersion, string? latestVersion)
+    {
+        var isDevelopment = !TryParse(currentVersion, out var current);
+        var latestDisplay = string.IsNullOrWhiteSpace(latestVersion)
+            ? currentVersion
+            : Normalize(latestVersion) ?? latestVersion;
 
         var newVersion = !isDevelopment
-            && Version.TryParse(latestVersion.TrimStart('v'), out var latest)
+            && TryParse(latestDisplay, out var latest)
             && latest > current;
 
         return new VersionInfo
         {
             NewVersion = newVersion,
             IsDevelopment = isDevelopment,
-            CurrentVersion = Number,
-            LatestVersion = latestVersion
+            CurrentVersion = currentVersion,
+            LatestVersion = latestDisplay
         };
+    }
+
+    public static string? Normalize(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            return null;
+        }
+
+        var trimmed = version.Trim();
+        if (trimmed.StartsWith('v') || trimmed.StartsWith('V'))
+        {
+            trimmed = trimmed[1..];
+        }
+
+        return trimmed.Length == 0 ? null : trimmed;
+    }
+
+    public static bool TryParse(string? version, out Version parsed)
+    {
+        var normalized = Normalize(version);
+        return Version.TryParse(normalized, out parsed!);
     }
 }

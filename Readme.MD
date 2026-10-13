@@ -38,11 +38,13 @@ Lingarr provides multi-architecture Docker images that automatically select the 
 
 | Tag | Description | Architectures |
 |-----|-------------|---------------|
-| `latest` | Latest stable release | `amd64` `arm64` |
-| `1.2.3` | Specific version | `amd64` `arm64` |
+| `latest` | Latest stable release of this fork | `amd64` `arm64` |
+| `0.1.0` | Specific fork version | `amd64` `arm64` |
 | `main` | ⚠️ Development build from main branch | `amd64` `arm64` |
 
-**Note:** As of 1.0.3 all images support both AMD64 (Intel/AMD) and ARM64 (Raspberry Pi, Apple Silicon) architectures. Docker will automatically pull the correct architecture for your system.
+This fork versions independently of upstream Lingarr, starting at **0.1.0**. Untagged `main` builds report `0.0.0-dev` in the UI. Publish a GitHub Release tagged `v0.1.0` (then `v0.1.1`, `v0.2.0`, …) to push `0.1.0` and `latest`. In-app update checks use this repository's GitHub Releases, not upstream `api.lingarr.com`.
+
+**Note:** Images support both AMD64 (Intel/AMD) and ARM64 (Raspberry Pi, Apple Silicon). Docker will automatically pull the correct architecture for your system.
 
 ### Available Registry
 
@@ -52,8 +54,6 @@ This fork publishes multi-arch images to GitHub Container Registry only:
 |----------|-------|
 | GitHub Container Registry | `ghcr.io/davidoffsy/lingarr-support-mkv:latest` |
 
-Until a GitHub Release is published, use the `main` tag (`ghcr.io/davidoffsy/lingarr-support-mkv:main`).
-
 ## Setting up Lingarr
 
 By default, Lingarr uses `MySQL` however, `PostgreSQL` and `SQLite` are also supported. Note that Lingarr starts quickly, if migrations fail, using a `healthcheck` combined with 
@@ -62,7 +62,7 @@ By default, Lingarr uses `MySQL` however, `PostgreSQL` and `SQLite` are also sup
 ```yaml
 services:
   lingarr:
-    image: ghcr.io/davidoffsy/lingarr-support-mkv:main
+    image: ghcr.io/davidoffsy/lingarr-support-mkv:latest
     container_name: lingarr
     restart: unless-stopped
     environment:
@@ -144,7 +144,7 @@ docker run -d \
   -v /path/to/media/tv:/tv \
   -v /path/to/config:/app/config \
   --network lingarr \
-  ghcr.io/davidoffsy/lingarr-support-mkv:main
+  ghcr.io/davidoffsy/lingarr-support-mkv:latest
 ```
 
 ### Lingarr environment variables
