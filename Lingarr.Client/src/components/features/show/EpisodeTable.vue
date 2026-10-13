@@ -40,7 +40,7 @@
                     </ContextMenu>
                     <button
                         type="button"
-                        title="提取内嵌字幕"
+                        title="Extract embedded subtitles"
                         class="inline-flex cursor-pointer items-center"
                         @click.stop="openExtractModal(episode)">
                         <BadgeComponent>MKV</BadgeComponent>

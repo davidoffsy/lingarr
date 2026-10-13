@@ -14,7 +14,7 @@
                     @click.stop>
                     <div class="mb-3 flex items-start justify-between gap-3">
                         <div>
-                            <h2 class="text-base font-semibold">提取内嵌字幕</h2>
+                            <h2 class="text-base font-semibold">Extract embedded subtitles</h2>
                             <p v-if="title" class="text-primary-content/60 mt-1 text-sm">
                                 {{ title }}
                             </p>
@@ -30,7 +30,7 @@
                     <div class="shell-scroll min-h-32 grow overflow-auto">
                         <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-10">
                             <LoaderCircleIcon class="h-8 w-8 animate-spin text-accent" />
-                            <p class="text-sm text-accent-content">正在读取字幕轨</p>
+                            <p class="text-sm text-accent-content">Reading subtitle tracks</p>
                         </div>
 
                         <div v-else class="space-y-4">
@@ -83,7 +83,7 @@
                                         <span
                                             v-if="track.sidecarExists"
                                             class="text-xs text-green-400">
-                                            已有外挂
+                                            Sidecar exists
                                         </span>
                                     </div>
                                     <p
@@ -96,7 +96,7 @@
 
                             <div v-if="skipped.length" class="space-y-2">
                                 <h3 class="text-primary-content/50 text-xs font-semibold tracking-wide uppercase">
-                                    无法提取
+                                    Cannot extract
                                 </h3>
                                 <div
                                     v-for="track in skipped"
@@ -111,16 +111,16 @@
                             <div v-if="selectedTrack" class="space-y-3">
                                 <SelectComponent
                                     v-if="needsSourceLanguage"
-                                    label="源语言"
+                                    label="Source language"
                                     size="sm"
-                                    placeholder="选择源语言"
+                                    placeholder="Select source language"
                                     :options="sourceLanguageOptions"
                                     :selected="sourceLanguage"
                                     @update:selected="sourceLanguage = $event" />
                                 <SelectComponent
-                                    label="目标语言"
+                                    label="Target language"
                                     size="sm"
-                                    placeholder="选择目标语言"
+                                    placeholder="Select target language"
                                     :options="targetLanguageOptions"
                                     :selected="targetLanguage"
                                     @update:selected="targetLanguage = $event" />
@@ -129,7 +129,7 @@
                     </div>
 
                     <p class="text-primary-content/50 mt-3 text-xs">
-                        提取会完整读取视频文件。文件在云盘上时可能很慢。
+                        Extraction reads the entire video file. This can be slow when the file is on a cloud drive.
                     </p>
 
                     <div class="mt-3 flex justify-end gap-2">
@@ -145,7 +145,7 @@
                             :disabled="!canTranslate"
                             :loading="submitting"
                             @click="translate">
-                            翻译
+                            Translate
                         </ButtonComponent>
                     </div>
                 </div>
@@ -258,10 +258,10 @@ const statusMessage = computed(() => {
         return reasonMessage(result.value.reason)
     }
     if (!tracks.value.length && !skipped.value.length) {
-        return '没有可提取的文本字幕轨。'
+        return 'No extractable text subtitle tracks.'
     }
     if (!tracks.value.length) {
-        return '没有可提取的文本字幕轨。图像或其它不支持的轨列在下方。'
+        return 'No extractable text subtitle tracks. Image or other unsupported tracks are listed below.'
     }
     return null
 })
@@ -271,15 +271,15 @@ const statusType = computed(() => (errorMessage.value ? 'error' : 'warning'))
 const reasonMessage = (reason?: string) => {
     switch (reason) {
         case 'no_mkv':
-            return '没有找到对应的 MKV 文件。'
+            return 'No matching MKV file was found.'
         case 'no_ffprobe':
-            return '服务器上没有 ffprobe，无法读取内嵌字幕轨。'
+            return 'ffprobe is not available on the server, so embedded subtitle tracks cannot be read.'
         case 'timeout':
-            return '读取字幕轨超时。文件在云盘上时可能需要更长时间。'
+            return 'Timed out while reading subtitle tracks. Files on a cloud drive may need more time.'
         case 'probe_failed':
-            return '无法读取字幕轨。'
+            return 'Could not read subtitle tracks.'
         default:
-            return '无法读取字幕轨。'
+            return 'Could not read subtitle tracks.'
     }
 }
 
@@ -327,7 +327,7 @@ const startProbe = async () => {
         if (isCanceled(error)) {
             return
         }
-        errorMessage.value = apiErrorMessage(error, '无法读取字幕轨。')
+        errorMessage.value = apiErrorMessage(error, 'Could not read subtitle tracks.')
     } finally {
         loading.value = false
         abortController = null
@@ -359,7 +359,7 @@ const translate = async () => {
         }
         close()
     } catch (error: unknown) {
-        errorMessage.value = apiErrorMessage(error, '无法创建翻译任务。')
+        errorMessage.value = apiErrorMessage(error, 'Could not create the translation job.')
     } finally {
         submitting.value = false
     }
