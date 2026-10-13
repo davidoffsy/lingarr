@@ -184,6 +184,15 @@ Proofreading is only available for the AI services above (OpenAI, Anthropic, Gem
 
 See the AI services documentation for the full placeholder list.
 
+#### **AI request settings**
+
+Shared across OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, and LocalAI. Configure them under **Settings > Services > Request Settings**, or through environment variables. Do not add these rows to every provider table.
+
+| **Setting** | **Environment Variable** | **Default** | **Description** |
+|-------------|--------------------------|-------------|-----------------|
+| `ai_max_tokens` | `AI_MAX_TOKENS` | `8192` | Maximum tokens for one completion (thinking plus the answer). `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI chat receives both `max_tokens` and `max_completion_tokens` (a 400 retries with `max_tokens` only); other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `1024` when the field is omitted, which is too small for a 50-line batch. Not applied to LocalAI generate (Ollama `/api/generate`). |
+| `ai_thinking` | `AI_THINKING` | `off` | Chain-of-thought control for LocalAI OpenAI-compatible chat only. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `auto` sends no `thinking` field (use this for Ollama). `on` writes `thinking.enabled`. If the endpoint returns 400/422 for the `thinking` field, Lingarr retries without it for the rest of that process. |
+
 #### **DeepL**
 
 | **Environment Variable** | **Description**                                                                 |

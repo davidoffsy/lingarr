@@ -81,6 +81,9 @@ public class SubtitleTranslationServiceTests
     {
         public Mock<IProgressService> ProgressServiceMock { get; init; } = null!;
         public SubtitleTranslationService Service { get; init; } = null!;
+        public List<List<int>> BatchCalls { get; init; } = [];
+        public List<List<int>> FallbackCalls { get; init; } = [];
+        public List<List<TranslatedLineData>> EmittedLines { get; init; } = [];
     }
 
     private static PerLineHarness CreatePerLineHarness(
@@ -141,8 +144,13 @@ public class SubtitleTranslationServiceTests
         };
     }
 
-    private static BatchHarness CreateBatchHarness(Func<List<BatchSubtitleItem>, Dictionary<int, string>> batchTranslate)
+    private static BatchHarness CreateBatchHarness(
+        Func<List<BatchSubtitleItem>, Dictionary<int, string>> batchTranslate,
+        Func<List<BatchSubtitleItem>, Dictionary<int, string>>? fallbackTranslate = null)
     {
+        var batchCalls = new List<List<int>>();
+        var fallbackCalls = new List<List<int>>();
+        var emittedLines = new List<List<TranslatedLineData>>();
         var translationServiceMock = new Mock<ITranslationService>();
         translationServiceMock
             .Setup(t => t.GetLanguagePair(
@@ -157,7 +165,40 @@ public class SubtitleTranslationServiceTests
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync((List<BatchSubtitleItem> items, string _, string _, CancellationToken _) => batchTranslate(items));
+            .ReturnsAsync((List<BatchSubtitleItem> items, string _, string _, CancellationToken _) =>
+            {
+                batchCalls.Add(items.Select(item => item.Position).ToList());
+                return batchTranslate(items);
+            });
+
+        var services = new List<TranslationServiceEntry>
+        {
+            new("test", translationServiceMock.Object, batchTranslationServiceMock.Object)
+        };
+
+        if (fallbackTranslate != null)
+        {
+            var fallbackServiceMock = new Mock<ITranslationService>();
+            fallbackServiceMock
+                .Setup(t => t.GetLanguagePair(
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync((string source, string target, CancellationToken _) => new LanguagePair { Source = source, Target = target, Tier = MatchTier.Exact });
+            var fallbackBatchMock = new Mock<IBatchTranslationService>();
+            fallbackBatchMock
+                .Setup(b => b.TranslateBatchAsync(
+                    It.IsAny<List<BatchSubtitleItem>>(),
+                    It.IsAny<string>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync((List<BatchSubtitleItem> items, string _, string _, CancellationToken _) =>
+                {
+                    fallbackCalls.Add(items.Select(item => item.Position).ToList());
+                    return fallbackTranslate(items);
+                });
+            services.Add(new TranslationServiceEntry("fallback", fallbackServiceMock.Object, fallbackBatchMock.Object));
+        }
 
         var progressServiceMock = new Mock<IProgressService>();
         progressServiceMock
@@ -165,15 +206,20 @@ public class SubtitleTranslationServiceTests
             .Returns(Task.CompletedTask);
         progressServiceMock
             .Setup(p => p.EmitLines(It.IsAny<TranslationRequest>(), It.IsAny<List<TranslatedLineData>>()))
+            .Callback<TranslationRequest, List<TranslatedLineData>>((_, lines) =>
+                emittedLines.Add(lines.ToList()))
             .Returns(Task.CompletedTask);
 
         return new BatchHarness
         {
             ProgressServiceMock = progressServiceMock,
             Service = new SubtitleTranslationService(
-                [new TranslationServiceEntry("test", translationServiceMock.Object, batchTranslationServiceMock.Object)],
+                services,
                 NullLogger.Instance,
-                progressServiceMock.Object)
+                progressServiceMock.Object),
+            BatchCalls = batchCalls,
+            FallbackCalls = fallbackCalls,
+            EmittedLines = emittedLines
         };
     }
 
@@ -772,7 +818,7 @@ public class SubtitleTranslationServiceTests
     [Fact]
     public async Task ProcessSubtitleBatch_MissingTranslation_FallsBackToOriginalLines()
     {
-        // Arrange
+        // Arrange - a 1-item empty result is terminal and writes the original lines
         var harness = CreateBatchHarness(_ => new Dictionary<int, string>());
         var subtitles = new List<SubtitleItem> { Subtitle(1, "hello", "world") };
 
@@ -785,6 +831,117 @@ public class SubtitleTranslationServiceTests
 
         // Assert
         Assert.Equal(["hello", "world"], subtitles[0].TranslatedLines);
+        Assert.Single(harness.BatchCalls);
+    }
+
+    [Fact]
+    public async Task ProcessSubtitleBatch_EmptyBatchResult_Throws()
+    {
+        // Arrange - two or more items with an empty dict is a service failure, not original fallback
+        var harness = CreateBatchHarness(_ => new Dictionary<int, string>());
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello"), Subtitle(2, "world") };
+
+        // Act + Assert
+        await Assert.ThrowsAsync<TranslationException>(() =>
+            harness.Service.ProcessSubtitleBatch(subtitles,
+                "en", "es",
+                stripSubtitleFormatting: false,
+                preserveLineBreaks: false,
+                CancellationToken.None));
+        Assert.Single(harness.BatchCalls);
+        Assert.All(subtitles, subtitle => Assert.Empty(subtitle.TranslatedLines));
+    }
+
+    [Fact]
+    public async Task ProcessSubtitleBatch_PartialBatch_RetriesMissingHalfAndFillsAll()
+    {
+        // Arrange - each call returns the head half of the requested list
+        var harness = CreateBatchHarness(items =>
+            items.Take(Math.Max(1, items.Count / 2))
+                .ToDictionary(item => item.Position, item => $"tr:{item.Line}"));
+        var subtitles = new List<SubtitleItem>
+        {
+            Subtitle(1, "one"),
+            Subtitle(2, "two"),
+            Subtitle(3, "three"),
+            Subtitle(4, "four")
+        };
+
+        // Act
+        await harness.Service.ProcessSubtitleBatch(subtitles,
+            "en", "es",
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            CancellationToken.None);
+
+        // Assert
+        Assert.True(harness.BatchCalls.Count > 1);
+        Assert.Equal(4, harness.BatchCalls[0].Count);
+        Assert.All(harness.BatchCalls.Skip(1), call => Assert.True(call.Count < harness.BatchCalls[0].Count));
+        Assert.Equal(["tr:one"], subtitles[0].TranslatedLines);
+        Assert.Equal(["tr:two"], subtitles[1].TranslatedLines);
+        Assert.Equal(["tr:three"], subtitles[2].TranslatedLines);
+        Assert.Equal(["tr:four"], subtitles[3].TranslatedLines);
+    }
+
+    [Fact]
+    public async Task ProcessSubtitleBatch_PrimaryZeroHitOnSplit_FallbackFillsRemainder()
+    {
+        var harness = CreateBatchHarness(
+            items => items.Count >= 4
+                ? items.Take(1).ToDictionary(item => item.Position, item => $"a:{item.Line}")
+                : new Dictionary<int, string>(),
+            items => items.ToDictionary(item => item.Position, item => $"b:{item.Line}"));
+        var subtitles = new List<SubtitleItem>
+        {
+            Subtitle(1, "one"),
+            Subtitle(2, "two"),
+            Subtitle(3, "three"),
+            Subtitle(4, "four")
+        };
+
+        await harness.Service.ProcessSubtitleBatch(subtitles,
+            "en", "es",
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            CancellationToken.None);
+
+        Assert.NotEmpty(harness.FallbackCalls);
+        Assert.Equal(["a:one"], subtitles[0].TranslatedLines);
+        Assert.Equal(["b:two"], subtitles[1].TranslatedLines);
+        Assert.Equal(["b:three"], subtitles[2].TranslatedLines);
+        Assert.Equal(["b:four"], subtitles[3].TranslatedLines);
+    }
+
+    [Fact]
+    public async Task TranslateSubtitlesBatch_ServiceFailure_EmitsPartialHits()
+    {
+        var harness = CreateBatchHarness(items =>
+            items.Count >= 4
+                ? items.Take(1).ToDictionary(item => item.Position, item => $"tr:{item.Line}")
+                : new Dictionary<int, string>());
+        var subtitles = new List<SubtitleItem>
+        {
+            Subtitle(1, "one"),
+            Subtitle(2, "two"),
+            Subtitle(3, "three"),
+            Subtitle(4, "four")
+        };
+
+        await Assert.ThrowsAsync<TranslationException>(() =>
+            harness.Service.TranslateSubtitlesBatch(
+                subtitles,
+                NewRequest(),
+                stripSubtitleFormatting: false,
+                preserveLineBreaks: false,
+                batchSize: 0,
+                CancellationToken.None));
+
+        Assert.Single(harness.EmittedLines);
+        Assert.Equal([1], harness.EmittedLines[0].Select(line => line.Position));
+        Assert.Equal("tr:one", harness.EmittedLines[0][0].Target);
+        Assert.Equal(["tr:one"], subtitles[0].TranslatedLines);
+        Assert.All(subtitles.Skip(1), subtitle => Assert.Empty(subtitle.TranslatedLines));
     }
 
     #endregion

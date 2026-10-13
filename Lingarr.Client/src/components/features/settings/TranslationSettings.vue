@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <CardComponent title="Translation Request">
         <template #description>
             Modify translation request settings by changing retry options or batch size if available in the service.
@@ -6,27 +6,7 @@
         <template #content>
             <SaveNotification ref="saveNotification" />
 
-            <template
-                v-if="
-                [
-                    SERVICE_TYPE.ANTHROPIC,
-                    SERVICE_TYPE.DEEPSEEK,
-                    SERVICE_TYPE.GEMINI,
-                    SERVICE_TYPE.LOCALAI,
-                    SERVICE_TYPE.MISTRAL,
-                    SERVICE_TYPE.OPENAI,
-                    SERVICE_TYPE.XAI
-                ].includes(
-                    serviceType as
-                        | 'openai'
-                        | 'anthropic'
-                        | 'localai'
-                        | 'gemini'
-                        | 'deepseek'
-                        | 'mistral'
-                        | 'xai'
-                )
-            ">
+            <template v-if="isAiService">
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Use batch translation</span>
                     Process multiple subtitle lines together in batches to improve translation
@@ -43,12 +23,41 @@
             <template v-if="useBatchTranslation == 'true'">
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Batch size:</span>
-                    Amount of subtitle lines in a single batch.
+                    Number of subtitle lines per request. 50–100 is a good balance of speed and context.
                 </div>
                 <InputComponent
                     v-model="maxBatchSize"
                     :validation-type="INPUT_VALIDATION_TYPE.NUMBER"
                     @update:validation="(val) => (isValid.maxBatchSize = val)" />
+            </template>
+
+            <template v-if="isAiService">
+                <div class="flex flex-col space-x-2">
+                    <span class="font-semibold">Max tokens</span>
+                    Maximum tokens for one completion (thinking plus the answer). Default 8192 is
+                    enough for 50–100 subtitle lines with thinking off. Use 0 to omit the field and
+                    keep the provider default. Anthropic's request template defaults to 1024 when
+                    the field is omitted, which is too small for a 50-line batch.
+                </div>
+                <InputComponent
+                    v-model="aiMaxTokens"
+                    :validation-type="INPUT_VALIDATION_TYPE.INTEGER"
+                    @update:validation="(val) => (isValid.aiMaxTokens = val)" />
+            </template>
+
+            <template v-if="isLocalAiService">
+                <div class="flex flex-col space-x-2">
+                    <span class="font-semibold">Thinking</span>
+                    Controls whether the model spends tokens on chain-of-thought. Off writes
+                    thinking.disabled (needed for OpenCode Go / MiMo). Auto sends no thinking field
+                    — use this for Ollama. On writes thinking.enabled. Only applied to LocalAI
+                    OpenAI-compatible chat. If the endpoint rejects the thinking field, Lingarr
+                    retries without it.
+                </div>
+                <SelectComponent
+                    :selected="aiThinking"
+                    :options="thinkingOptions"
+                    @update:selected="aiThinking = $event" />
             </template>
 
             <div class="flex flex-col space-x-2">
@@ -94,21 +103,29 @@
 <script setup lang="ts">
 import { computed, ref, reactive } from 'vue'
 import { useSettingStore } from '@/store/setting'
-import { INPUT_VALIDATION_TYPE, SERVICE_TYPE, SETTINGS } from '@/ts'
+import { AI_THINKING_MODES, INPUT_VALIDATION_TYPE, SERVICE_TYPE, SETTINGS } from '@/ts'
 import CardComponent from '@/components/common/CardComponent.vue'
 import SaveNotification from '@/components/common/SaveNotification.vue'
 import InputComponent from '@/components/common/InputComponent.vue'
+import SelectComponent from '@/components/common/SelectComponent.vue'
 import ToggleButton from '@/components/common/ToggleButton.vue'
 
 const saveNotification = ref<InstanceType<typeof SaveNotification> | null>(null)
 const settingsStore = useSettingStore()
 const isValid = reactive({
     maxBatchSize: true,
+    aiMaxTokens: true,
     requestTimeout: true,
     maxRetries: true,
     retryDelay: true,
     retryDelayMultiplier: true
 })
+
+const thinkingOptions = [
+    { value: AI_THINKING_MODES.AUTO, label: 'Auto' },
+    { value: AI_THINKING_MODES.OFF, label: 'Off' },
+    { value: AI_THINKING_MODES.ON, label: 'On' }
+]
 
 const serviceType = computed(() => {
     try {
@@ -119,6 +136,29 @@ const serviceType = computed(() => {
         return ''
     }
 })
+
+const isAiService = computed(() =>
+    [
+        SERVICE_TYPE.ANTHROPIC,
+        SERVICE_TYPE.DEEPSEEK,
+        SERVICE_TYPE.GEMINI,
+        SERVICE_TYPE.LOCALAI,
+        SERVICE_TYPE.MISTRAL,
+        SERVICE_TYPE.OPENAI,
+        SERVICE_TYPE.XAI
+    ].includes(
+        serviceType.value as
+            | 'openai'
+            | 'anthropic'
+            | 'localai'
+            | 'gemini'
+            | 'deepseek'
+            | 'mistral'
+            | 'xai'
+    )
+)
+
+const isLocalAiService = computed(() => serviceType.value === SERVICE_TYPE.LOCALAI)
 
 const useBatchTranslation = computed({
     get: (): string => settingsStore.getSetting(SETTINGS.USE_BATCH_TRANSLATION) as string,
@@ -132,6 +172,22 @@ const maxBatchSize = computed({
     get: (): string => settingsStore.getSetting(SETTINGS.MAX_BATCH_SIZE) as string,
     set: (newValue: string): void => {
         settingsStore.updateSetting(SETTINGS.MAX_BATCH_SIZE, newValue, isValid.maxBatchSize)
+        saveNotification.value?.show()
+    }
+})
+
+const aiMaxTokens = computed({
+    get: (): string => settingsStore.getSetting(SETTINGS.AI_MAX_TOKENS) as string,
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.AI_MAX_TOKENS, newValue, isValid.aiMaxTokens)
+        saveNotification.value?.show()
+    }
+})
+
+const aiThinking = computed({
+    get: (): string => settingsStore.getSetting(SETTINGS.AI_THINKING) as string,
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.AI_THINKING, newValue, true)
         saveNotification.value?.show()
     }
 })

@@ -1,4 +1,4 @@
-﻿using System.Net.Http.Headers;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
@@ -19,6 +19,7 @@ public class DeepSeekService : BaseLanguageService, IProofreadService
     private string? _model;
     private string? _apiKey;
     private string? _requestTemplate;
+    private int _maxTokens;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
@@ -59,6 +60,7 @@ public class DeepSeekService : BaseLanguageService, IProofreadService
                 SettingKeys.Translation.DeepSeek.RequestTemplate,
                 SettingKeys.Translation.AiPrompt,
                 SettingKeys.Translation.AiUserPrompt,
+                SettingKeys.Translation.AiMaxTokens,
                 SettingKeys.Translation.ProofreadPrompt,
                 SettingKeys.Translation.ProofreadUserPrompt,
                 SettingKeys.Translation.LanguageCodeFormat
@@ -77,6 +79,7 @@ public class DeepSeekService : BaseLanguageService, IProofreadService
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);
             _prompt = settings[SettingKeys.Translation.AiPrompt];
             _userPrompt = settings[SettingKeys.Translation.AiUserPrompt];
+            _maxTokens = AiMaxTokens.Parse(settings.GetValueOrDefault(SettingKeys.Translation.AiMaxTokens));
             _proofreadPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadPrompt);
             _proofreadUserPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadUserPrompt);
 
@@ -128,6 +131,7 @@ public class DeepSeekService : BaseLanguageService, IProofreadService
         CancellationToken cancellationToken)
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(_requestTemplate!, replacements);
+        bodyJson = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
 
         var content = new StringContent(
             bodyJson,

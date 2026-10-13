@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
@@ -20,6 +20,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     private string? _apiKey;
     private string? _version;
     private string? _requestTemplate;
+    private int _maxTokens;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
@@ -65,6 +66,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                 SettingKeys.Translation.Anthropic.RequestTemplate,
                 SettingKeys.Translation.AiPrompt,
                 SettingKeys.Translation.AiUserPrompt,
+                SettingKeys.Translation.AiMaxTokens,
                 SettingKeys.Translation.ProofreadPrompt,
                 SettingKeys.Translation.ProofreadUserPrompt,
                 SettingKeys.Translation.RequestTimeout,
@@ -88,6 +90,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);
             _prompt = settings[SettingKeys.Translation.AiPrompt];
             _userPrompt = settings[SettingKeys.Translation.AiUserPrompt];
+            _maxTokens = AiMaxTokens.Parse(settings.GetValueOrDefault(SettingKeys.Translation.AiMaxTokens));
             _proofreadPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadPrompt);
             _proofreadUserPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadUserPrompt);
 
@@ -225,6 +228,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
         CancellationToken cancellationToken)
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(_requestTemplate!, replacements);
+        bodyJson = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
         var content = new StringContent(
             bodyJson,
             Encoding.UTF8,
@@ -347,6 +351,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     {
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
         var bodyJson = _requestTemplateService.BuildRequestBody(_requestTemplate!, replacements);
+        bodyJson = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
         bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
         {
             ["tools"] = new[]

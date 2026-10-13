@@ -94,6 +94,8 @@ public static class SettingKeys
         public const string TargetLanguages = "target_languages";
         public const string AiPrompt = "ai_prompt";
         public const string AiUserPrompt = "ai_user_prompt";
+        public const string AiMaxTokens = "ai_max_tokens";
+        public const string AiThinking = "ai_thinking";
         public const string ProofreadPrompt = "proofread_prompt";
         public const string ProofreadUserPrompt = "proofread_user_prompt";
         public const string AiContextBefore = "ai_context_before";

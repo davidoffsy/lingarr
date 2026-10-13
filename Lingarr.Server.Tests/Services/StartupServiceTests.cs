@@ -30,6 +30,8 @@ public class StartupServiceTests : IDisposable
         ("LIBRE_TRANSLATE_URL", SettingKeys.Translation.LibreTranslate.Url),
         ("LIBRE_TRANSLATE_API_KEY", SettingKeys.Translation.LibreTranslate.ApiKey),
         ("AI_PROMPT", SettingKeys.Translation.AiPrompt),
+        ("AI_MAX_TOKENS", SettingKeys.Translation.AiMaxTokens),
+        ("AI_THINKING", SettingKeys.Translation.AiThinking),
         ("OPENAI_MODEL", SettingKeys.Translation.OpenAi.Model),
         ("OPENAI_API_KEY", SettingKeys.Translation.OpenAi.ApiKey),
         ("ANTHROPIC_MODEL", SettingKeys.Translation.Anthropic.Model),

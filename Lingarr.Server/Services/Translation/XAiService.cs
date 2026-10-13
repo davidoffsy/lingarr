@@ -21,6 +21,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
     private string? _requestTemplate;
     private readonly HttpClient _httpClient;
     private readonly IRequestTemplateService _requestTemplateService;
+    private int _maxTokens;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
@@ -66,6 +67,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
                 SettingKeys.Translation.XAi.RequestTemplate,
                 SettingKeys.Translation.AiPrompt,
                 SettingKeys.Translation.AiUserPrompt,
+                SettingKeys.Translation.AiMaxTokens,
                 SettingKeys.Translation.ProofreadPrompt,
                 SettingKeys.Translation.ProofreadUserPrompt,
                 SettingKeys.Translation.RequestTimeout,
@@ -89,6 +91,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);
             _prompt = settings[SettingKeys.Translation.AiPrompt];
             _userPrompt = settings[SettingKeys.Translation.AiUserPrompt];
+            _maxTokens = AiMaxTokens.Parse(settings.GetValueOrDefault(SettingKeys.Translation.AiMaxTokens));
             _proofreadPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadPrompt);
             _proofreadUserPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadUserPrompt);
 
@@ -226,6 +229,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
     {
         var requestUrl = $"{_endpoint}/chat/completions";
         var bodyJson = _requestTemplateService.BuildRequestBody(_requestTemplate!, replacements);
+        bodyJson = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
         var requestContent = new StringContent(
             bodyJson,
             Encoding.UTF8,
@@ -364,6 +368,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
         {
             ["response_format"] = responseFormat
         });
+        bodyJson = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
 
         var requestContent = new StringContent(
             bodyJson,

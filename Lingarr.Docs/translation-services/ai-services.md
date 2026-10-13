@@ -94,6 +94,15 @@ Both accept the placeholders already listed above, plus two more:
 
 `{lineToTranslate}`, `{contextBefore}` and `{contextAfter}` are sent as empty strings during a proofread call, so a request template that already contains them still renders correctly.
 
+## Request settings
+
+These two settings apply to every AI service and are configured once under **Settings > Services > Request Settings**, or through environment variables. They are not listed again in each provider table below.
+
+| **Environment Variable** | **Description** |
+|--------------------------|-----------------|
+| `AI_MAX_TOKENS` | Maximum tokens for one completion (thinking plus the answer). Default `8192`. `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI chat receives both `max_tokens` and `max_completion_tokens` (a 400 retries with `max_tokens` only); other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `1024` when the field is omitted, which is too small for a 50-line batch. LocalAI generate (Ollama `/api/generate`) is not injected. |
+| `AI_THINKING` | Chain-of-thought control. Default `off`. Applied only to LocalAI OpenAI-compatible chat. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `auto` sends no `thinking` field — use this for Ollama. `on` writes `thinking.enabled`. If the endpoint returns 400/422 for the `thinking` field, Lingarr retries without it for the rest of that process. |
+
 ## Environment variables
 ### OpenAI
 

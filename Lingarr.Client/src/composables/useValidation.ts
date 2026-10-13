@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { isValidCron } from 'cron-validator'
 
 type ValidationProps = {
-    validationType?: 'number' | 'string' | 'url' | 'cron'
+    validationType?: 'number' | 'integer' | 'string' | 'url' | 'cron'
     minLength?: number
     maxLength?: number
     errorMessage?: string
@@ -21,6 +21,12 @@ export default function useValidation(props: ValidationProps) {
                 error.value = isValid.value
                     ? ''
                     : props.errorMessage || 'Please enter a valid number'
+                break
+            case 'integer':
+                isValid.value = /^\d+$/.test(value.trim())
+                error.value = isValid.value
+                    ? ''
+                    : props.errorMessage || 'Please enter a whole number of 0 or more'
                 break
             case 'string':
                 const min = props.minLength ?? 0

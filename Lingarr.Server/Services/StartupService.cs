@@ -235,6 +235,8 @@ public class StartupService : IHostedService
             { "LIBRE_TRANSLATE_API_KEY", SettingKeys.Translation.LibreTranslate.ApiKey },
             { "AI_PROMPT", SettingKeys.Translation.AiPrompt },
             { "AI_USER_PROMPT", SettingKeys.Translation.AiUserPrompt },
+            { "AI_MAX_TOKENS", SettingKeys.Translation.AiMaxTokens },
+            { "AI_THINKING", SettingKeys.Translation.AiThinking },
             { "PROOFREAD_PROMPT", SettingKeys.Translation.ProofreadPrompt },
             { "PROOFREAD_USER_PROMPT", SettingKeys.Translation.ProofreadUserPrompt },
 

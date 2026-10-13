@@ -11,6 +11,7 @@ using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services.Subtitle;
+using Lingarr.Server.Services.Translation.Batch;
 
 namespace Lingarr.Server.Services;
 
@@ -368,29 +369,24 @@ public class SubtitleTranslationService
                 .Take(batchSize)
                 .ToList();
 
-            var newlyTranslated = await ProcessSubtitleBatch(
-                currentBatch,
-                translationRequest.SourceLanguage,
-                translationRequest.TargetLanguage,
-                stripSubtitleFormatting,
-                preserveLineBreaks,
-                cancellationToken);
-
-            if (newlyTranslated.Count > 0)
+            var pending = currentBatch.Where(subtitle => subtitle.TranslatedLines.Count == 0).ToList();
+            try
             {
-                var lineData = newlyTranslated.Select(subtitle =>
-                {
-                    _translationByPosition.TryGetValue(subtitle.Position, out var entry);
-                    return new TranslatedLineData
-                    {
-                        Position = subtitle.Position,
-                        Source = string.Join(" ", stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines),
-                        Target = string.Join(" ", subtitle.TranslatedLines),
-                        Service = entry.Service,
-                        Pair = entry.Pair
-                    };
-                }).ToList();
-                await _progressService!.EmitLines(translationRequest, lineData);
+                var newlyTranslated = await ProcessSubtitleBatch(
+                    currentBatch,
+                    translationRequest.SourceLanguage,
+                    translationRequest.TargetLanguage,
+                    stripSubtitleFormatting,
+                    preserveLineBreaks,
+                    cancellationToken);
+
+                await EmitTranslatedLines(translationRequest, newlyTranslated, stripSubtitleFormatting);
+            }
+            catch
+            {
+                var partialHits = pending.Where(subtitle => subtitle.TranslatedLines.Count > 0).ToList();
+                await EmitTranslatedLines(translationRequest, partialHits, stripSubtitleFormatting);
+                throw;
             }
 
             processedSubtitles += currentBatch.Count;
@@ -469,8 +465,14 @@ public class SubtitleTranslationService
         bool preserveLineBreaks,
         CancellationToken cancellationToken)
     {
+        var pending = toTranslate.Where(subtitle => subtitle.TranslatedLines.Count == 0).ToList();
+        if (pending.Count == 0)
+        {
+            return;
+        }
+
         var lineSeparator = preserveLineBreaks ? "\n" : " ";
-        var batchItems = toTranslate.Select(subtitle =>
+        var batchItems = pending.Select(subtitle =>
         {
             var contentLines = stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines;
             return new BatchSubtitleItem
@@ -480,34 +482,57 @@ public class SubtitleTranslationService
             };
         }).ToList();
 
-        var batchResults = await candidate.Entry.BatchService!.TranslateBatchAsync(
-            batchItems,
-            candidate.Pair.Source,
-            candidate.Pair.Target,
-            cancellationToken);
-
-        foreach (var subtitle in toTranslate)
+        var batchResults = new Dictionary<int, string>();
+        var fillCompleted = false;
+        try
         {
-            var contentLines = stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines;
-            if (!batchResults.TryGetValue(subtitle.Position, out var translated))
+            await BatchFillLoop.FillAsync(
+                candidate.Entry.BatchService!,
+                batchItems,
+                candidate.Pair.Source,
+                candidate.Pair.Target,
+                _logger,
+                cancellationToken,
+                batchResults);
+            fillCompleted = true;
+        }
+        finally
+        {
+            foreach (var subtitle in pending)
             {
-                _logger.LogWarning("Translation not found for subtitle at position {Position} using original line.", subtitle.Position);
+                if (subtitle.TranslatedLines.Count > 0)
+                {
+                    continue;
+                }
+
+                var contentLines = stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines;
+                if (batchResults.TryGetValue(subtitle.Position, out var translated))
+                {
+                    if (stripSubtitleFormatting)
+                    {
+                        translated = SubtitleFormatterService.RemoveMarkup(translated);
+                    }
+
+                    subtitle.TranslatedLines = ToSubtitleLines(
+                        translated,
+                        contentLines.Count,
+                        preserveLineBreaks,
+                        stripSubtitleFormatting,
+                        subtitle.Position);
+                    _translationByPosition[subtitle.Position] = (candidate.Entry.Name, candidate.Pair);
+                    continue;
+                }
+
+                if (!fillCompleted)
+                {
+                    continue;
+                }
+
+                _logger.LogWarning(
+                    "Translation not found for subtitle at position {Position} using original line.",
+                    subtitle.Position);
                 subtitle.TranslatedLines = contentLines;
-                continue;
             }
-
-            if (stripSubtitleFormatting)
-            {
-                translated = SubtitleFormatterService.RemoveMarkup(translated);
-            }
-
-            subtitle.TranslatedLines = ToSubtitleLines(
-                translated,
-                contentLines.Count,
-                preserveLineBreaks,
-                stripSubtitleFormatting,
-                subtitle.Position);
-            _translationByPosition[subtitle.Position] = (candidate.Entry.Name, candidate.Pair);
         }
     }
 
@@ -599,6 +624,31 @@ public class SubtitleTranslationService
         }
 
         return context.Count > 0 ? context : [];
+    }
+
+    private async Task EmitTranslatedLines(
+        TranslationRequest translationRequest,
+        List<SubtitleItem> subtitles,
+        bool stripSubtitleFormatting)
+    {
+        if (subtitles.Count == 0)
+        {
+            return;
+        }
+
+        var lineData = subtitles.Select(subtitle =>
+        {
+            _translationByPosition.TryGetValue(subtitle.Position, out var entry);
+            return new TranslatedLineData
+            {
+                Position = subtitle.Position,
+                Source = string.Join(" ", stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines),
+                Target = string.Join(" ", subtitle.TranslatedLines),
+                Service = entry.Service,
+                Pair = entry.Pair
+            };
+        }).ToList();
+        await _progressService!.EmitLines(translationRequest, lineData);
     }
 
     /// <summary>

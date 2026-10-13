@@ -8,6 +8,7 @@ export type InputType = (typeof INPUT_TYPE)[keyof typeof INPUT_TYPE]
 
 export const INPUT_VALIDATION_TYPE = {
     NUMBER: 'number',
+    INTEGER: 'integer',
     STRING: 'string',
     URL: 'url',
     CRON: 'cron'

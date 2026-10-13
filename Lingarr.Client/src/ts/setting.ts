@@ -7,6 +7,12 @@ export const LOCAL_AI_PROTOCOLS = {
     OLLAMA_GENERATE: 'ollama_generate'
 } as const
 
+export const AI_THINKING_MODES = {
+    AUTO: 'auto',
+    OFF: 'off',
+    ON: 'on'
+} as const
+
 export const SETTINGS = {
     RADARR_URL: 'radarr_url',
     SONARR_URL: 'sonarr_url',
@@ -33,6 +39,8 @@ export const SETTINGS = {
     XAI_MODEL: 'xai_model',
     AI_PROMPT: 'ai_prompt',
     AI_USER_PROMPT: 'ai_user_prompt',
+    AI_MAX_TOKENS: 'ai_max_tokens',
+    AI_THINKING: 'ai_thinking',
     PROOFREAD_PROMPT: 'proofread_prompt',
     PROOFREAD_USER_PROMPT: 'proofread_user_prompt',
     THEME: 'theme',
@@ -108,6 +116,8 @@ export interface ISettings {
     xai_model: string
     ai_prompt: string
     ai_user_prompt: string
+    ai_max_tokens: string
+    ai_thinking: string
     proofread_prompt: string
     proofread_user_prompt: string
     movie_age_threshold: string

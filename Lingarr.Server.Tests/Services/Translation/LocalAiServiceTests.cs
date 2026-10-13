@@ -138,6 +138,160 @@ public class LocalAiServiceTests
     }
 
     [Fact]
+    public async Task TranslateAsync_Chat_MissingThinkingSetting_InjectsDisabled()
+    {
+        UseSettings(ChatEndpoint);
+        var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        AssertThinkingType(bodies[0], "disabled");
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Chat_ThinkingOff_InjectsDisabled()
+    {
+        UseSettings(ChatEndpoint, aiThinking: "off");
+        var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        AssertThinkingType(bodies[0], "disabled");
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Chat_ThinkingAuto_OmitsThinking()
+    {
+        UseSettings(ChatEndpoint, aiThinking: "auto");
+        var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        AssertNoThinking(bodies[0]);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Chat_ThinkingOn_InjectsEnabled()
+    {
+        UseSettings(ChatEndpoint, aiThinking: "on");
+        var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        AssertThinkingType(bodies[0], "enabled");
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Generate_DoesNotInjectThinking()
+    {
+        UseSettings(GenerateEndpoint, aiThinking: "off");
+        var bodies = CaptureRequestBodies(() => GenerateResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        AssertNoThinking(bodies[0]);
+        AssertNoMaxTokens(bodies[0]);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Chat_MissingMaxTokensSetting_Injects8192()
+    {
+        UseSettings(ChatEndpoint);
+        var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        AssertMaxTokens(bodies[0], 8192);
+        AssertMaxCompletionTokens(bodies[0], 8192);
+        AssertThinkingType(bodies[0], "disabled");
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Chat_MaxTokensZero_OmitsField()
+    {
+        UseSettings(ChatEndpoint, aiMaxTokens: "0");
+        var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        AssertNoMaxTokens(bodies[0]);
+        AssertNoMaxCompletionTokens(bodies[0]);
+        AssertThinkingType(bodies[0], "disabled");
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Chat_ThinkingRejected_RetriesWithoutThinking()
+    {
+        UseSettings(ChatEndpoint, aiThinking: "off");
+        var bodies = CaptureRequestBodies(
+            () => JsonError(HttpStatusCode.BadRequest, "unknown field: thinking"),
+            () => ChatResponse("Hola"));
+
+        var translated = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", translated);
+        Assert.Equal(2, bodies.Count);
+        AssertThinkingType(bodies[0], "disabled");
+        AssertNoThinking(bodies[1]);
+        AssertMaxTokens(bodies[1], 8192);
+        AssertMaxCompletionTokens(bodies[1], 8192);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Chat_CompletionTokensRejected_RetriesWithMaxTokensOnly()
+    {
+        UseSettings(ChatEndpoint, aiThinking: "auto", aiMaxTokens: "8192");
+        var bodies = CaptureRequestBodies(
+            () => JsonError(HttpStatusCode.BadRequest, "unknown field: max_completion_tokens"),
+            () => ChatResponse("Hola"));
+
+        var translated = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", translated);
+        Assert.Equal(2, bodies.Count);
+        AssertMaxTokens(bodies[0], 8192);
+        AssertMaxCompletionTokens(bodies[0], 8192);
+        AssertMaxTokens(bodies[1], 8192);
+        AssertNoMaxCompletionTokens(bodies[1]);
+        AssertNoThinking(bodies[1]);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Generate_DoesNotInjectMaxTokens()
+    {
+        UseSettings(GenerateEndpoint, aiMaxTokens: "8192");
+        var bodies = CaptureRequestBodies(() => GenerateResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        AssertNoMaxTokens(bodies[0]);
+        AssertNoMaxCompletionTokens(bodies[0]);
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_ChatStructured_IncludesThinkingAndResponseFormat()
+    {
+        UseSettings(ChatEndpoint, aiThinking: "off");
+        var bodies = CaptureRequestBodies(() => ChatResponse("{\"translations\":" + ValidJson + "}"));
+
+        var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
+
+        Assert.Equal("Hola", result[1]);
+        Assert.Single(bodies);
+        AssertThinkingType(bodies[0], "disabled");
+        using var document = JsonDocument.Parse(bodies[0]);
+        Assert.Equal("json_schema", document.RootElement.GetProperty("response_format").GetProperty("type").GetString());
+    }
+
+    [Fact]
     public async Task TranslateAsync_OpenAiChatProtocol_PostsToChatCompletions()
     {
         UseSettings("https://opencode.ai/zen/go/v1", SettingKeys.Translation.LocalAi.Protocols.OpenAiChat);
@@ -344,7 +498,11 @@ public class LocalAiServiceTests
         Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
     };
 
-    private void UseSettings(string endpoint, string? protocol = null)
+    private void UseSettings(
+        string endpoint,
+        string? protocol = null,
+        string? aiThinking = null,
+        string? aiMaxTokens = null)
     {
         var settings = new Dictionary<string, string>
         {
@@ -364,6 +522,16 @@ public class LocalAiServiceTests
         if (!string.IsNullOrEmpty(protocol))
         {
             settings[SettingKeys.Translation.LocalAi.Protocol] = protocol;
+        }
+
+        if (aiThinking != null)
+        {
+            settings[SettingKeys.Translation.AiThinking] = aiThinking;
+        }
+
+        if (aiMaxTokens != null)
+        {
+            settings[SettingKeys.Translation.AiMaxTokens] = aiMaxTokens;
         }
 
         _settingsMock.Setup(settingService => settingService.GetSettings(It.IsAny<IEnumerable<string>>()))
@@ -403,6 +571,75 @@ public class LocalAiServiceTests
             .Callback<HttpRequestMessage, CancellationToken>((request, _) => captured.Add(request))
             .Returns(() => Task.FromResult(responseFactory()));
         return captured;
+    }
+
+    private List<string> CaptureRequestBodies(params Func<HttpResponseMessage>[] responseFactories)
+    {
+        var captured = new List<string>();
+        var index = 0;
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) =>
+            {
+                var body = request.Content?.ReadAsStringAsync().GetAwaiter().GetResult() ?? string.Empty;
+                captured.Add(body);
+            })
+            .Returns(() =>
+            {
+                var factory = responseFactories[Math.Min(index, responseFactories.Length - 1)];
+                index++;
+                return Task.FromResult(factory());
+            });
+        return captured;
+    }
+
+    private static HttpResponseMessage JsonError(HttpStatusCode statusCode, string message) =>
+        new()
+        {
+            StatusCode = statusCode,
+            Content = new StringContent(
+                JsonSerializer.Serialize(new { error = new { message } }),
+                Encoding.UTF8,
+                "application/json")
+        };
+
+    private static void AssertThinkingType(string json, string expectedType)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(expectedType, document.RootElement.GetProperty("thinking").GetProperty("type").GetString());
+    }
+
+    private static void AssertNoThinking(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.False(document.RootElement.TryGetProperty("thinking", out _));
+    }
+
+    private static void AssertMaxTokens(string json, int expected)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(expected, document.RootElement.GetProperty("max_tokens").GetInt32());
+    }
+
+    private static void AssertNoMaxTokens(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.False(document.RootElement.TryGetProperty("max_tokens", out _));
+    }
+
+    private static void AssertMaxCompletionTokens(string json, int expected)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(expected, document.RootElement.GetProperty("max_completion_tokens").GetInt32());
+    }
+
+    private static void AssertNoMaxCompletionTokens(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        Assert.False(document.RootElement.TryGetProperty("max_completion_tokens", out _));
     }
 
     private static string? HeaderValue(HttpRequestMessage request, string name)

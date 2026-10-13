@@ -23,6 +23,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     private string? _chatRequestTemplate;
     private string? _generateRequestTemplate;
     private bool _isChatEndpoint;
+    private AiThinkingMode _aiThinking;
+    private int _maxTokens;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly string _sessionId = OpenCodeGoHeaders.NewSessionId();
@@ -72,6 +74,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 SettingKeys.Translation.LocalAi.GenerateRequestTemplate,
                 SettingKeys.Translation.AiPrompt,
                 SettingKeys.Translation.AiUserPrompt,
+                SettingKeys.Translation.AiMaxTokens,
+                SettingKeys.Translation.AiThinking,
                 SettingKeys.Translation.ProofreadPrompt,
                 SettingKeys.Translation.ProofreadUserPrompt,
                 SettingKeys.Translation.RequestTimeout,
@@ -97,6 +101,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);
             _prompt = settings[SettingKeys.Translation.AiPrompt];
             _userPrompt = settings[SettingKeys.Translation.AiUserPrompt];
+            _aiThinking = AiThinking.Parse(settings.GetValueOrDefault(SettingKeys.Translation.AiThinking));
+            _maxTokens = AiMaxTokens.Parse(settings.GetValueOrDefault(SettingKeys.Translation.AiMaxTokens));
             _proofreadPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadPrompt);
             _proofreadUserPrompt = settings.GetValueOrDefault(SettingKeys.Translation.ProofreadUserPrompt);
             settings.TryGetValue(SettingKeys.Translation.LocalAi.Protocol, out var protocolSetting);
@@ -266,6 +272,53 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     }
 
     /// <summary>
+    /// Posts an OpenAI-compatible chat body, injecting max tokens and thinking.
+    /// A 400/422 from an extra field (thinking, or max_completion_tokens) is retried
+    /// without that field and the instance remembers the stripped mode for later calls.
+    /// </summary>
+    private async Task<HttpResponseMessage> PostChatRequestAsync(string bodyJson, CancellationToken cancellationToken)
+    {
+        var withCompatibleTokens = AiMaxTokens.ApplyOpenAiCompatible(_requestTemplateService, bodyJson, _maxTokens);
+        var thinkingMode = _aiThinking;
+        var requestJson = AiThinking.Apply(_requestTemplateService, withCompatibleTokens, thinkingMode);
+        var response = await PostJsonAsync(requestJson, cancellationToken);
+        if (response.IsSuccessStatusCode || !IsCompatRejection(response.StatusCode))
+        {
+            return response;
+        }
+
+        if (thinkingMode != AiThinkingMode.Auto)
+        {
+            _logger.LogWarning(
+                "LocalAI rejected the chat request with {StatusCode} while thinking was {Mode}; retrying without a thinking field.",
+                response.StatusCode,
+                thinkingMode);
+            response.Dispose();
+            _aiThinking = AiThinkingMode.Auto;
+            response = await PostJsonAsync(withCompatibleTokens, cancellationToken);
+            if (response.IsSuccessStatusCode || !IsCompatRejection(response.StatusCode))
+            {
+                return response;
+            }
+        }
+
+        if (_maxTokens > 0)
+        {
+            _logger.LogWarning(
+                "LocalAI rejected the chat request with {StatusCode}; retrying with max_tokens only.",
+                response.StatusCode);
+            response.Dispose();
+            var withChatTokens = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
+            return await PostJsonAsync(withChatTokens, cancellationToken);
+        }
+
+        return response;
+    }
+
+    private static bool IsCompatRejection(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity;
+
+    /// <summary>
     /// Translates a batch of subtitles in a single API call using structured outputs fallback
     /// Since LocalAI may not support structured outputs, we'll attempt structured format first,
     /// then fall back to regular parsing if needed. Responses that cannot be parsed are retried
@@ -412,7 +465,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             ["response_format"] = responseFormat
         });
 
-        var response = await PostJsonAsync(bodyJson, cancellationToken);
+        var response = await PostChatRequestAsync(bodyJson, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -466,7 +519,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
 
-        var response = await PostJsonAsync(bodyJson, cancellationToken);
+        var response = await PostChatRequestAsync(bodyJson, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -610,7 +663,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         CancellationToken cancellationToken)
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-        var response = await PostJsonAsync(bodyJson, cancellationToken);
+        var response = await PostChatRequestAsync(bodyJson, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
