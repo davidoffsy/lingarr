@@ -1,4 +1,4 @@
-﻿using Lingarr.Server.Models.Integrations;
+using Lingarr.Server.Models.Integrations;
 
 namespace Lingarr.Server.Interfaces.Services.Integration;
 
@@ -46,4 +46,15 @@ public interface ISonarrService
     /// with the path information of the episode, or <c>null</c> if the API call fails.
     /// </returns>
     Task<SonarrEpisodePath?> GetEpisodePath(int episodeNumber);
+
+    /// <summary>
+    /// Looks up a series in Sonarr by TVDB id without fetching the whole library.
+    /// </summary>
+    Task<SonarrShow?> GetShowByTvdbId(int tvdbId);
+
+    /// <summary>
+    /// Looks up a series in Sonarr by IMDb id (e.g. <c>tt1234567</c>).
+    /// Sonarr cannot filter the series list by imdbId, so this scans the library and matches <c>ImdbId</c>.
+    /// </summary>
+    Task<SonarrShow?> GetShowByImdbId(string imdbId);
 }

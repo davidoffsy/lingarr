@@ -17,6 +17,7 @@ using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Integration;
 using Lingarr.Server.Interfaces.Services.Subtitle;
 using Lingarr.Server.Interfaces.Services.Sync;
+using Lingarr.Server.Interfaces.Services.Plex;
 using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Listener;
 using Lingarr.Server.Providers;
@@ -27,6 +28,7 @@ using Lingarr.Server.Services.Plugins.Manifests;
 using Lingarr.Server.Services.Subtitle;
 using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Sync;
+using Lingarr.Server.Services.Plex;
 using Lingarr.Server.Services.Translation;
 using Lingarr.Migrations;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -55,6 +57,15 @@ public static class ServiceCollectionExtensions
 
         builder.Services.AddMemoryCache();
         builder.Services.AddHttpClient();
+        builder.Services.AddHttpClient("PlexTv", client =>
+        {
+            client.BaseAddress = new Uri("https://plex.tv");
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        builder.Services.AddHttpClient("Plex", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+        });
 
         builder.ConfigureSwagger();
         builder.ConfigureLogging();
@@ -165,6 +176,14 @@ public static class ServiceCollectionExtensions
         builder.Services.AddScoped<IProgressService, ProgressService>();
         builder.Services.AddScoped<IRadarrService, RadarrService>();
         builder.Services.AddScoped<ISonarrService, SonarrService>();
+        builder.Services.AddScoped<IPlexTvClient, PlexTvClient>();
+        builder.Services.AddScoped<IPlexApiClient, PlexApiClient>();
+        builder.Services.AddScoped<IPlexAuthService, PlexAuthService>();
+        builder.Services.AddScoped<IPlexRaterFilter, PlexRaterFilter>();
+        builder.Services.AddScoped<IPlexMediaResolver, PlexMediaResolver>();
+        builder.Services.AddScoped<IPlexRatingTrigger, PlexRatingTrigger>();
+        builder.Services.AddSingleton<IPlexWebhookParser, PlexWebhookParser>();
+        builder.Services.AddSingleton<IPlexWebhookInbox, PlexWebhookInbox>();
         builder.Services.AddScoped<ISubtitleService, SubtitleService>();
         builder.Services.AddScoped<ITranslationRequestService, TranslationRequestService>();
         builder.Services.AddScoped<ITranslationRequestEventService, TranslationRequestEventService>();

@@ -1,0 +1,235 @@
+using Lingarr.Contracts.Interfaces;
+using Lingarr.Contracts.Models;
+using Lingarr.Core.Configuration;
+using Lingarr.Core.Data;
+using Lingarr.Core.Enum;
+using Lingarr.Core.Interfaces;
+using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Interfaces.Services.Plex;
+using Lingarr.Server.Models;
+using Lingarr.Server.Models.FileSystem;
+using Lingarr.Server.Models.Plex;
+using Lingarr.Server.Services.Media;
+using Microsoft.EntityFrameworkCore;
+
+namespace Lingarr.Server.Services.Plex;
+
+public class PlexRatingTrigger : IPlexRatingTrigger
+{
+    private static readonly TranslationStatus[] BlockingStatuses =
+    [
+        TranslationStatus.Pending,
+        TranslationStatus.InProgress,
+        TranslationStatus.Completed
+    ];
+
+    private readonly LingarrDbContext _dbContext;
+    private readonly ISubtitleService _subtitleService;
+    private readonly IMediaFileLocator _mediaFileLocator;
+    private readonly IEmbeddedSubtitleService _embeddedSubtitleService;
+    private readonly ISettingService _settingService;
+    private readonly ITranslationRequestService _translationRequestService;
+    private readonly ILogger<PlexRatingTrigger> _logger;
+
+    public PlexRatingTrigger(
+        LingarrDbContext dbContext,
+        ISubtitleService subtitleService,
+        IMediaFileLocator mediaFileLocator,
+        IEmbeddedSubtitleService embeddedSubtitleService,
+        ISettingService settingService,
+        ITranslationRequestService translationRequestService,
+        ILogger<PlexRatingTrigger> logger)
+    {
+        _dbContext = dbContext;
+        _subtitleService = subtitleService;
+        _mediaFileLocator = mediaFileLocator;
+        _embeddedSubtitleService = embeddedSubtitleService;
+        _settingService = settingService;
+        _translationRequestService = translationRequestService;
+        _logger = logger;
+    }
+
+    public async Task EnqueueAsync(
+        PlexMediaResolveResult resolved,
+        CancellationToken cancellationToken = default)
+    {
+        if (!resolved.Found || resolved.MediaType is not MediaType mediaType)
+        {
+            return;
+        }
+
+        var media = await LoadMediaAsync(mediaType, resolved.EntityId, cancellationToken);
+        if (media == null)
+        {
+            _logger.LogInformation(
+                "Plex rating trigger skipped: {MediaType} id {EntityId} not found",
+                mediaType,
+                resolved.EntityId);
+            return;
+        }
+
+        if (string.IsNullOrEmpty(media.Path) || string.IsNullOrEmpty(media.FileName))
+        {
+            _logger.LogInformation(
+                "Plex rating trigger skipped: Path or FileName is null for {MediaType} id {EntityId}",
+                mediaType,
+                media.Id);
+            return;
+        }
+
+        var sidecars = await _subtitleService.GetSubtitles(media.Path, media.FileName);
+        var mkvPath = _mediaFileLocator.FindMkv(media);
+        var tracks = await ProbeTracksAsync(mkvPath, media.FileName, cancellationToken);
+        var candidates = PlexSubtitleCandidateMerger.Merge(sidecars, tracks, mkvPath);
+
+        var sourceLanguages = CodesInOrder(
+            await _settingService.GetSettingAsJson<SourceLanguage>(SettingKeys.Translation.SourceLanguages));
+        var targetLanguages = CodesInOrder(
+            await _settingService.GetSettingAsJson<TargetLanguage>(SettingKeys.Translation.TargetLanguages));
+        var ignoreCaptions = await _settingService.GetSetting(SettingKeys.Translation.IgnoreCaptions) == "true";
+
+        var selected = PlexSourceSubtitleSelector.Select(candidates, sourceLanguages, ignoreCaptions);
+        if (selected == null)
+        {
+            _logger.LogInformation(
+                "Plex rating trigger skipped: no source subtitle for {MediaType} id {EntityId} ({FileName})",
+                mediaType,
+                media.Id,
+                media.FileName);
+            return;
+        }
+
+        if (targetLanguages.Count == 0)
+        {
+            _logger.LogInformation(
+                "Plex rating trigger skipped: no target languages configured for {MediaType} id {EntityId}",
+                mediaType,
+                media.Id);
+            return;
+        }
+
+        var sidecarLanguages = sidecars
+            .Select(sidecar => sidecar.Language)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var existingTargets = await _dbContext.TranslationRequests
+            .Where(request =>
+                request.MediaId == media.Id
+                && request.MediaType == mediaType
+                && BlockingStatuses.Contains(request.Status))
+            .Select(request => request.TargetLanguage)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var existingTargetSet = existingTargets.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var subtitlePath = selected.IsEmbedded
+            ? EmbeddedSubtitlePlaceholder.Create(selected.Path, selected.TrackIndex)
+            : selected.Path;
+
+        var enqueued = 0;
+        foreach (var targetLanguage in targetLanguages)
+        {
+            if (sidecarLanguages.Contains(targetLanguage))
+            {
+                _logger.LogInformation(
+                    "Plex rating trigger skipped target {TargetLanguage}: sidecar already exists for {FileName}",
+                    targetLanguage,
+                    media.FileName);
+                continue;
+            }
+
+            if (existingTargetSet.Contains(targetLanguage))
+            {
+                _logger.LogInformation(
+                    "Plex rating trigger skipped target {TargetLanguage}: request already exists for {MediaType} id {EntityId}",
+                    targetLanguage,
+                    mediaType,
+                    media.Id);
+                continue;
+            }
+
+            await _translationRequestService.CreateRequest(new TranslateAbleSubtitle
+            {
+                MediaId = media.Id,
+                MediaType = mediaType,
+                SubtitlePath = subtitlePath,
+                SourceLanguage = selected.Language,
+                TargetLanguage = targetLanguage,
+                SubtitleFormat = selected.Format
+            });
+            enqueued++;
+
+            _logger.LogInformation(
+                "Plex rating trigger queued {SourceLanguage} -> {TargetLanguage} for {SubtitlePath}",
+                selected.Language,
+                targetLanguage,
+                subtitlePath);
+        }
+
+        if (enqueued == 0)
+        {
+            _logger.LogInformation(
+                "Plex rating trigger skipped: all target languages already present or requested for {MediaType} id {EntityId}",
+                mediaType,
+                media.Id);
+        }
+    }
+
+    private async Task<IMedia?> LoadMediaAsync(
+        MediaType mediaType,
+        int entityId,
+        CancellationToken cancellationToken) =>
+        mediaType switch
+        {
+            MediaType.Movie => await _dbContext.Movies
+                .FirstOrDefaultAsync(movie => movie.Id == entityId, cancellationToken),
+            MediaType.Episode => await _dbContext.Episodes
+                .FirstOrDefaultAsync(episode => episode.Id == entityId, cancellationToken),
+            _ => null
+        };
+
+    private async Task<IReadOnlyList<EmbeddedSubtitleTrack>> ProbeTracksAsync(
+        string? mkvPath,
+        string? fileName,
+        CancellationToken cancellationToken)
+    {
+        if (mkvPath == null)
+        {
+            return [];
+        }
+
+        try
+        {
+            return await _embeddedSubtitleService.ProbeAsync(mkvPath, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Failed to probe embedded subtitles for Plex media {FileName}; continuing with sidecars only.",
+                fileName);
+            return [];
+        }
+    }
+
+    private static List<string> CodesInOrder<T>(IEnumerable<T> languages) where T : ILanguage
+    {
+        var codes = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var language in languages)
+        {
+            if (string.IsNullOrWhiteSpace(language.Code) || !seen.Add(language.Code))
+            {
+                continue;
+            }
+
+            codes.Add(language.Code);
+        }
+
+        return codes;
+    }
+}

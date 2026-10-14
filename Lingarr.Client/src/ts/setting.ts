@@ -87,7 +87,14 @@ export const SETTINGS = {
     XAI_REQUEST_TEMPLATE: 'xai_request_template',
     LANGUAGE_CODE_FORMAT: 'language_code_format',
     RADARR_DEFAULT_INCLUDE: 'radarr_default_include',
-    SONARR_DEFAULT_INCLUDE: 'sonarr_default_include'
+    SONARR_DEFAULT_INCLUDE: 'sonarr_default_include',
+    PLEX_URL: 'plex_url',
+    PLEX_CLIENT_IDENTIFIER: 'plex_client_identifier',
+    PLEX_MACHINE_ID: 'plex_machine_id',
+    PLEX_ACCOUNT_TITLE: 'plex_account_title',
+    PLEX_MIN_RATING: 'plex_min_rating',
+    PLEX_ALLOWED_RATERS: 'plex_allowed_raters',
+    PLEX_SETTINGS_COMPLETED: 'plex_settings_completed'
 } as const
 
 export interface ISettings {
@@ -165,6 +172,13 @@ export interface ISettings {
     language_code_format: string
     radarr_default_include: string
     sonarr_default_include: string
+    plex_url: string
+    plex_client_identifier: string
+    plex_machine_id: string
+    plex_account_title: string
+    plex_min_rating: string
+    plex_allowed_raters: string
+    plex_settings_completed: string
 }
 
 
@@ -181,6 +195,7 @@ export const ENCRYPTED_SETTINGS = {
     DEEPL_API_KEY: 'deepl_api_key',
     LIBRETRANSLATE_API_KEY: 'libretranslate_api_key',
     LOCAL_AI_API_KEY: 'local_ai_api_key',
+    PLEX_WEBHOOK_SECRET: 'plex_webhook_secret'
 } as const
 
 export interface IEncryptedSettings {
@@ -196,6 +211,7 @@ export interface IEncryptedSettings {
     deepl_api_key: string
     libretranslate_api_key: string
     local_ai_api_key: string
+    plex_webhook_secret: string
 }
 
 export const SERVICE_TYPE = {

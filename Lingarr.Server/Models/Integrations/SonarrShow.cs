@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
 namespace Lingarr.Server.Models.Integrations;
 
@@ -20,4 +20,8 @@ public class SonarrShow
     public List<SonarrSeason> Seasons { get; set; } = new();
     [JsonPropertyName("images")]
     public List<IntegrationImage>? Images { get; set; } = new();
+    [JsonPropertyName("tvdbId")]
+    public int? TvdbId { get; set; }
+    [JsonPropertyName("imdbId")]
+    public string? ImdbId { get; set; }
 }

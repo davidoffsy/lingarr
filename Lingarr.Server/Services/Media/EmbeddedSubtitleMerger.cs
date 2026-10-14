@@ -90,6 +90,6 @@ public static class EmbeddedSubtitleMerger
     private static string LanguageCaptionKey(EmbeddedSubtitleTrack track) =>
         LanguageCaptionKey(track.Language, track.Caption);
 
-    private static string LanguageCaptionKey(string language, string caption) =>
-        $"{language.ToLowerInvariant()}\0{(caption ?? string.Empty).ToLowerInvariant()}";
+    public static string LanguageCaptionKey(string language, string? caption) =>
+        $"{(language ?? string.Empty).ToLowerInvariant()}\0{(caption ?? string.Empty).ToLowerInvariant()}";
 }

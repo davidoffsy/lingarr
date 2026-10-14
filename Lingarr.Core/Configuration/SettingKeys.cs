@@ -12,6 +12,15 @@ public static class SettingKeys
         public const string SonarrDefaultInclude = "sonarr_default_include";
         public const string RadarrSettingsCompleted = "radarr_settings_completed";
         public const string SonarrSettingsCompleted = "sonarr_settings_completed";
+        public const string PlexUrl = "plex_url";
+        public const string PlexToken = "plex_token";
+        public const string PlexClientIdentifier = "plex_client_identifier";
+        public const string PlexMachineId = "plex_machine_id";
+        public const string PlexAccountTitle = "plex_account_title";
+        public const string PlexWebhookSecret = "plex_webhook_secret";
+        public const string PlexMinRating = "plex_min_rating";
+        public const string PlexAllowedRaters = "plex_allowed_raters";
+        public const string PlexSettingsCompleted = "plex_settings_completed";
     }
 
     public static class Translation

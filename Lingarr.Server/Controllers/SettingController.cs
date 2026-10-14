@@ -1,6 +1,7 @@
-﻿using Lingarr.Core.Entities;
+using Lingarr.Core.Entities;
 using Lingarr.Server.Attributes;
 using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Services.Plex;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Lingarr.Server.Controllers;
@@ -26,6 +27,11 @@ public class SettingController : ControllerBase
     [HttpGet("{key}")]
     public async Task<ActionResult<string?>> GetSetting(string key)
     {
+        if (PlexTokenRedaction.IsPlexTokenKey(key))
+        {
+            return Ok(string.Empty);
+        }
+
         var value = await _settingService.GetSetting(key);
         if (value != null)
         {
@@ -44,7 +50,7 @@ public class SettingController : ControllerBase
     public async Task<ActionResult<Dictionary<string, string>>> GetSettings([FromBody] IEnumerable<string> keys)
     {
         var settings = await _settingService.GetSettings(keys);
-        return Ok(settings);
+        return Ok(PlexTokenRedaction.Redact(settings));
     }
     
     /// <summary>
@@ -56,6 +62,11 @@ public class SettingController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<bool>> SetSetting([FromBody] Setting setting)
     {
+        if (PlexTokenRedaction.IsPlexTokenKey(setting.Key))
+        {
+            return BadRequest("plex_token cannot be set via the API. Use Sign in with Plex.");
+        }
+
         var value = await _settingService.SetSetting(setting.Key, setting.Value);
         if (value)
         {
@@ -74,6 +85,11 @@ public class SettingController : ControllerBase
     [HttpPost("multiple/set")]
     public async Task<ActionResult<bool>> SetSettings([FromBody] Dictionary<string, string> settings)
     {
+        if (settings.Keys.Any(PlexTokenRedaction.IsPlexTokenKey))
+        {
+            return BadRequest("plex_token cannot be set via the API. Use Sign in with Plex.");
+        }
+
         var success = await _settingService.SetSettings(settings);
         if (success)
         {
@@ -91,6 +107,11 @@ public class SettingController : ControllerBase
     [HttpPost("encrypted")]
     public async Task<ActionResult> SetEncryptedSetting([FromBody] Setting setting)
     {
+        if (PlexTokenRedaction.IsPlexTokenKey(setting.Key))
+        {
+            return BadRequest("plex_token cannot be set via the API. Use Sign in with Plex.");
+        }
+
         var success = await _settingService.SetEncryptedSetting(setting.Key, setting.Value);
         return success ? Ok() : BadRequest("Setting could not be updated.");
     }
@@ -106,6 +127,6 @@ public class SettingController : ControllerBase
         [FromBody] IEnumerable<string> keys)
     {
         var settings = await _settingService.GetEncryptedSettings(keys);
-        return Ok(settings);
+        return Ok(PlexTokenRedaction.Redact(settings));
     }
 }

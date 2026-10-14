@@ -22,7 +22,8 @@ export default defineConfig({
                 text: 'Getting Started',
                 items: [
                     { text: 'Installation', link: '/getting-started/installation' },
-                    { text: 'Configuration', link: '/getting-started/configuration' }
+                    { text: 'Configuration', link: '/getting-started/configuration' },
+                    { text: 'Plex', link: '/getting-started/plex' }
                 ]
             },
             {

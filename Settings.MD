@@ -56,6 +56,23 @@ secrets:
 
 ---
 
+### **Plex Configuration**
+
+Primary setup is the web UI: **Settings → Integrations → Sign in with Plex**. Plex Web has no copyable API token; do **not** scrape XML or `X-Plex-Token` from Plex.
+
+The environment variables below are a **headless / reinstall fallback only**. Prefer Sign in with Plex.
+
+| **Environment Variable** | **Description**                                                                 |
+|--------------------------|---------------------------------------------------------------------------------|
+| `PLEX_URL`               | The Plex Media Server base URL, with no trailing slash. Example: `http://plex:32400`. |
+| `PLEX_TOKEN`             | plex.tv access token from Sign in with Plex (sensitive). Prefer UI OAuth; use this only for automation installs. |
+
+Do **not** put `PLEX_TOKEN` or Lingarr's `api_key` into the Plex Webhooks URL. The webhook secret is generated in the UI and appears only as the query `token=` on `POST /api/webhook/plex`.
+
+Keep **Remove language tag** off (`remove_language_tag=false`) so Plex can pick `{stem}.{lang}.srt`. If Plex `Part.file` paths differ from Radarr/Sonarr, add Movie mappings for films and Show mappings for episodes at `/settings/mapping`.
+
+---
+
 ### **Authentication Configuration**
 
 | **Environment Variable** | **Description**                                                                  |

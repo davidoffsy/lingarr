@@ -1,6 +1,7 @@
 using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
 using Lingarr.Core.Entities;
+using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Services.Plugins;
 using Lingarr.Server.Services.Translation;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +10,11 @@ namespace Lingarr.Server.Services;
 
 public class StartupService : IHostedService
 {
+    private static readonly HashSet<string> EncryptedEnvironmentKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        SettingKeys.Integration.PlexToken
+    };
+
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<StartupService> _logger;
 
@@ -30,7 +36,9 @@ public class StartupService : IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<LingarrDbContext>();
 
         await NormaliseServiceType(dbContext);
-        await ApplySettingsFromEnvironment(dbContext);
+        var encryptionService = scope.ServiceProvider.GetRequiredService<IEncryptionService>();
+        await ApplySettingsFromEnvironment(dbContext, encryptionService);
+        await CompletePlexSettingsFromEnvironment(dbContext);
 
         var pluginRegistry = scope.ServiceProvider.GetService<IPluginRegistry>();
         var pluginLoader = scope.ServiceProvider.GetService<PluginLoader>();
@@ -215,9 +223,7 @@ public class StartupService : IHostedService
     /// <summary>
     /// Applies settings from environment variables to the database.
     /// </summary>
-    /// <param name="dbContext">The database context used to access and update settings.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    private async Task ApplySettingsFromEnvironment(LingarrDbContext dbContext)
+    private async Task ApplySettingsFromEnvironment(LingarrDbContext dbContext, IEncryptionService encryptionService)
     {
         var environmentSettings = new Dictionary<string, string>
         {
@@ -225,6 +231,8 @@ public class StartupService : IHostedService
             { "RADARR_API_KEY", SettingKeys.Integration.RadarrApiKey },
             { "SONARR_URL", SettingKeys.Integration.SonarrUrl },
             { "SONARR_API_KEY", SettingKeys.Integration.SonarrApiKey },
+            { "PLEX_URL", SettingKeys.Integration.PlexUrl },
+            { "PLEX_TOKEN", SettingKeys.Integration.PlexToken },
             { "SOURCE_LANGUAGES", SettingKeys.Translation.SourceLanguages },
             { "TARGET_LANGUAGES", SettingKeys.Translation.TargetLanguages },
 
@@ -286,12 +294,39 @@ public class StartupService : IHostedService
             var setting = await dbContext.Settings.FirstOrDefaultAsync(s => s.Key == settingKey);
             if (setting != null)
             {
-                setting.Value = value;
+                setting.Value = EncryptedEnvironmentKeys.Contains(settingKey)
+                    ? encryptionService.Encrypt(value)
+                    : value;
                 await dbContext.SaveChangesAsync();
             }
 
             _logger.LogInformation($"Updated setting '{settingKey}' from environment variable '{envVar}'.");
         }
+    }
+
+    private async Task CompletePlexSettingsFromEnvironment(LingarrDbContext dbContext)
+    {
+        var url = await dbContext.Settings.FindAsync(SettingKeys.Integration.PlexUrl);
+        var token = await dbContext.Settings.FindAsync(SettingKeys.Integration.PlexToken);
+        if (string.IsNullOrWhiteSpace(url?.Value) || string.IsNullOrWhiteSpace(token?.Value))
+        {
+            return;
+        }
+
+        var completed = await dbContext.Settings.FindAsync(SettingKeys.Integration.PlexSettingsCompleted);
+        if (completed != null)
+        {
+            completed.Value = "true";
+        }
+
+        var title = await dbContext.Settings.FindAsync(SettingKeys.Integration.PlexAccountTitle);
+        if (title != null && string.IsNullOrWhiteSpace(title.Value))
+        {
+            title.Value = "Plex account";
+        }
+
+        await dbContext.SaveChangesAsync();
+        _logger.LogInformation("Plex settings completed from environment.");
     }
 
     private static string? ReadFromFileEnv(string fileEnvVar)

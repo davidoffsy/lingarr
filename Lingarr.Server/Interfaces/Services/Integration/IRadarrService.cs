@@ -1,4 +1,4 @@
-﻿using Lingarr.Server.Models.Integrations;
+using Lingarr.Server.Models.Integrations;
 
 namespace Lingarr.Server.Interfaces.Services.Integration;
 
@@ -26,4 +26,15 @@ public interface IRadarrService
     /// objects representing the movie, or <c>null</c> if the API call fails.
     /// </returns>
     Task<RadarrMovie?> GetMovie(int MovieId);
+
+    /// <summary>
+    /// Looks up a movie in Radarr by TMDB id without fetching the whole library.
+    /// </summary>
+    Task<RadarrMovie?> GetMovieByTmdbId(int tmdbId);
+
+    /// <summary>
+    /// Looks up a movie in Radarr by IMDb id (e.g. <c>tt1234567</c>).
+    /// Radarr cannot filter the movie list by imdbId, so this scans the library and matches <c>ImdbId</c>.
+    /// </summary>
+    Task<RadarrMovie?> GetMovieByImdbId(string imdbId);
 }

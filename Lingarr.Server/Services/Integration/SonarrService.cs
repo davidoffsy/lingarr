@@ -1,4 +1,4 @@
-﻿using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Integration;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.Integrations;
@@ -7,6 +7,12 @@ namespace Lingarr.Server.Services.Integration;
 
 public class SonarrService : ISonarrService
 {
+    private static readonly IntegrationSettingKeys SonarrKeys = new()
+    {
+        Url = "sonarr_url",
+        ApiKey = "sonarr_api_key"
+    };
+
     private readonly IIntegrationService _integrationService;
 
     public SonarrService(IIntegrationService integrationService)
@@ -19,11 +25,7 @@ public class SonarrService : ISonarrService
     {
         return await _integrationService.GetApiResponse<List<SonarrShow>>(
             "/api/v3/series/",
-            new IntegrationSettingKeys
-            {
-                Url = "sonarr_url",
-                ApiKey = "sonarr_api_key"
-            });
+            SonarrKeys);
     }
     
     /// <inheritdoc />
@@ -31,11 +33,7 @@ public class SonarrService : ISonarrService
     {
         return await _integrationService.GetApiResponse<List<SonarrEpisode>>(
             $"/api/v3/episode?seriesId={seriesNumber}&seasonNumber={seasonNumber}&includeImages=true",
-            new IntegrationSettingKeys
-            {
-                Url = "sonarr_url",
-                ApiKey = "sonarr_api_key"
-            });
+            SonarrKeys);
     }
 
     /// <inheritdoc />
@@ -43,11 +41,7 @@ public class SonarrService : ISonarrService
     {
         return await _integrationService.GetApiResponse<SonarrEpisode>(
             $"/api/v3/episode/{episodeNumber}?includeImages=true",
-            new IntegrationSettingKeys
-            {
-                Url = "sonarr_url",
-                ApiKey = "sonarr_api_key"
-            });
+            SonarrKeys);
     }
     
     /// <inheritdoc />
@@ -55,10 +49,30 @@ public class SonarrService : ISonarrService
     {
         return await _integrationService.GetApiResponse<SonarrEpisodePath>(
             $"/api/v3/episode/{episodeId}",
-            new IntegrationSettingKeys
-            {
-                Url = "sonarr_url",
-                ApiKey = "sonarr_api_key"
-            });
+            SonarrKeys);
+    }
+
+    /// <inheritdoc />
+    public async Task<SonarrShow?> GetShowByTvdbId(int tvdbId)
+    {
+        var shows = await _integrationService.GetApiResponse<List<SonarrShow>>(
+            $"/api/v3/series?tvdbId={tvdbId}",
+            SonarrKeys);
+        return shows?.FirstOrDefault(show => show.TvdbId == tvdbId);
+    }
+
+    /// <inheritdoc />
+    public async Task<SonarrShow?> GetShowByImdbId(string imdbId)
+    {
+        if (string.IsNullOrWhiteSpace(imdbId))
+        {
+            return null;
+        }
+
+        // Sonarr's series list endpoint does not filter on imdbId; unknown query
+        // params are ignored and the whole library is returned.
+        var shows = await GetShows();
+        return shows?.FirstOrDefault(show =>
+            string.Equals(show.ImdbId, imdbId, StringComparison.OrdinalIgnoreCase));
     }
 }

@@ -1,4 +1,4 @@
-﻿using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Integration;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.Integrations;
@@ -7,6 +7,12 @@ namespace Lingarr.Server.Services.Integration;
 
 public class RadarrService : IRadarrService
 {
+    private static readonly IntegrationSettingKeys RadarrKeys = new()
+    {
+        Url = "radarr_url",
+        ApiKey = "radarr_api_key"
+    };
+
     private readonly IIntegrationService _integrationService;
 
     public RadarrService(IIntegrationService integrationService)
@@ -19,11 +25,7 @@ public class RadarrService : IRadarrService
     {
         return await _integrationService.GetApiResponse<List<RadarrMovie>>(
             "/api/v3/movie/",
-            new IntegrationSettingKeys
-            {
-                Url = "radarr_url",
-                ApiKey = "radarr_api_key"
-            });
+            RadarrKeys);
     }
 
     /// <inheritdoc />
@@ -31,10 +33,30 @@ public class RadarrService : IRadarrService
     {
         return await _integrationService.GetApiResponse<RadarrMovie>(
             $"/api/v3/movie/{moveId}",
-            new IntegrationSettingKeys
-            {
-                Url = "radarr_url",
-                ApiKey = "radarr_api_key"
-            });
+            RadarrKeys);
+    }
+
+    /// <inheritdoc />
+    public async Task<RadarrMovie?> GetMovieByTmdbId(int tmdbId)
+    {
+        var movies = await _integrationService.GetApiResponse<List<RadarrMovie>>(
+            $"/api/v3/movie?tmdbId={tmdbId}",
+            RadarrKeys);
+        return movies?.FirstOrDefault(movie => movie.TmdbId == tmdbId);
+    }
+
+    /// <inheritdoc />
+    public async Task<RadarrMovie?> GetMovieByImdbId(string imdbId)
+    {
+        if (string.IsNullOrWhiteSpace(imdbId))
+        {
+            return null;
+        }
+
+        // Radarr's movie list endpoint does not filter on imdbId; unknown query
+        // params are ignored and the whole library is returned.
+        var movies = await GetMovies();
+        return movies?.FirstOrDefault(movie =>
+            string.Equals(movie.ImdbId, imdbId, StringComparison.OrdinalIgnoreCase));
     }
 }

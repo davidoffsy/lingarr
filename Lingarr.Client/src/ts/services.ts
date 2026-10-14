@@ -24,6 +24,14 @@ import {
     IProofreadLineApplyRequest,
     IProofreadLineRequest
 } from '@/ts'
+import {
+    IPlexPinResponse,
+    IPlexPinStatus,
+    IPlexServer,
+    IPlexConnectionTestResult,
+    IPlexWebhookSecretResponse,
+    IPlexWebhookStatus
+} from '@/ts/plex'
 
 export interface Services {
     auth: IAuthService
@@ -41,6 +49,7 @@ export interface Services {
     telemetry: ITelemetryService
     requestTemplate: IRequestTemplateService
     plugin: IPluginService
+    plex: IPlexService
 }
 
 export interface IPluginService {
@@ -176,4 +185,15 @@ export interface ITelemetryService {
 
 export interface IRequestTemplateService {
     getDefaults<T>(): Promise<T>
+}
+
+export interface IPlexService {
+    createPin(): Promise<IPlexPinResponse>
+    pollPin(id: number): Promise<IPlexPinStatus>
+    disconnect(): Promise<void>
+    getServers(): Promise<IPlexServer[]>
+    testConnection(url?: string): Promise<IPlexConnectionTestResult>
+    getWebhookSecret(): Promise<IPlexWebhookSecretResponse>
+    regenerateWebhookSecret(): Promise<IPlexWebhookSecretResponse>
+    getWebhookStatus(): Promise<IPlexWebhookStatus | null>
 }

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
 using Lingarr.Core.Entities;
+using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,6 +25,8 @@ public class StartupServiceTests : IDisposable
         ("RADARR_API_KEY", SettingKeys.Integration.RadarrApiKey),
         ("SONARR_URL", SettingKeys.Integration.SonarrUrl),
         ("SONARR_API_KEY", SettingKeys.Integration.SonarrApiKey),
+        ("PLEX_URL", SettingKeys.Integration.PlexUrl),
+        ("PLEX_TOKEN", SettingKeys.Integration.PlexToken),
         ("SOURCE_LANGUAGES", SettingKeys.Translation.SourceLanguages),
         ("TARGET_LANGUAGES", SettingKeys.Translation.TargetLanguages),
         ("USE_BATCH_TRANSLATION", SettingKeys.Translation.UseBatchTranslation),
@@ -170,6 +173,33 @@ public class StartupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplySettingsFromEnvironment_PlexToken_IsEncrypted()
+    {
+        Environment.SetEnvironmentVariable("PLEX_TOKEN", "raw-plex-token");
+        var encryption = new PrefixEncryptionService();
+        var serviceProvider = BuildProvider(encryption);
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        await startupService.StartAsync(CancellationToken.None);
+
+        Assert.Equal("enc:raw-plex-token", await GetSettingValue(serviceProvider, SettingKeys.Integration.PlexToken));
+    }
+
+    [Fact]
+    public async Task ApplySettingsFromEnvironment_PlexUrlAndToken_MarksSettingsCompleted()
+    {
+        Environment.SetEnvironmentVariable("PLEX_URL", "http://plex:32400");
+        Environment.SetEnvironmentVariable("PLEX_TOKEN", "raw-plex-token");
+        var serviceProvider = BuildProvider();
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        await startupService.StartAsync(CancellationToken.None);
+
+        Assert.Equal("true", await GetSettingValue(serviceProvider, SettingKeys.Integration.PlexSettingsCompleted));
+        Assert.Equal("Plex account", await GetSettingValue(serviceProvider, SettingKeys.Integration.PlexAccountTitle));
+    }
+
+    [Fact]
     public async Task ApplySettingsFromEnvironment_FileMissing_FallsBackToDirectVariable()
     {
         // Arrange
@@ -196,10 +226,11 @@ public class StartupServiceTests : IDisposable
         }
     }
 
-    private static IServiceProvider BuildProvider()
+    private static IServiceProvider BuildProvider(IEncryptionService? encryption = null)
     {
         var databaseName = Guid.NewGuid().ToString();
         var services = new ServiceCollection();
+        services.AddSingleton<IEncryptionService>(encryption ?? new PassthroughEncryptionService());
         services.AddDbContext<LingarrDbContext>(options =>
             options.UseInMemoryDatabase(databaseName));
 
@@ -215,6 +246,8 @@ public class StartupServiceTests : IDisposable
 
         dbContext.Settings.Add(new Setting { Key = SettingKeys.Integration.RadarrSettingsCompleted, Value = "false" });
         dbContext.Settings.Add(new Setting { Key = SettingKeys.Integration.SonarrSettingsCompleted, Value = "false" });
+        dbContext.Settings.Add(new Setting { Key = SettingKeys.Integration.PlexAccountTitle, Value = "" });
+        dbContext.Settings.Add(new Setting { Key = SettingKeys.Integration.PlexSettingsCompleted, Value = "false" });
         dbContext.SaveChanges();
 
         return serviceProvider;
@@ -232,4 +265,17 @@ public class StartupServiceTests : IDisposable
 [CollectionDefinition("StartupServiceEnv", DisableParallelization = true)]
 public class StartupServiceEnvCollection
 {
+}
+
+internal sealed class PassthroughEncryptionService : IEncryptionService
+{
+    public string Encrypt(string plaintext) => plaintext;
+    public string Decrypt(string ciphertext) => ciphertext;
+}
+
+internal sealed class PrefixEncryptionService : IEncryptionService
+{
+    public string Encrypt(string plaintext) => "enc:" + plaintext;
+    public string Decrypt(string ciphertext) =>
+        ciphertext.StartsWith("enc:", StringComparison.Ordinal) ? ciphertext["enc:".Length..] : ciphertext;
 }

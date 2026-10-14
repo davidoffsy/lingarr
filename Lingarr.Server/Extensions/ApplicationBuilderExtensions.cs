@@ -1,4 +1,4 @@
-﻿using Hangfire;
+using Hangfire;
 using Lingarr.Core;
 using Lingarr.Core.Configuration;
 using Lingarr.Migrations;
@@ -84,6 +84,8 @@ public static class ApplicationBuilderExtensions
             SettingKeys.Translation.DeepL.DeeplApiKey,
             SettingKeys.Translation.LibreTranslate.ApiKey,
             SettingKeys.Translation.LocalAi.ApiKey,
+            SettingKeys.Integration.PlexToken,
+            SettingKeys.Integration.PlexWebhookSecret,
         ];
 
         using var scope = app.Services.CreateScope();
@@ -95,11 +97,8 @@ public static class ApplicationBuilderExtensions
             var value = await settingService.GetSetting(key);
             if (string.IsNullOrEmpty(value)) continue;
 
-            try
-            {
-                encryptionService.Decrypt(value);
-            }
-            catch
+            var decrypted = encryptionService.Decrypt(value);
+            if (string.Equals(decrypted, value, StringComparison.Ordinal))
             {
                 await settingService.SetEncryptedSetting(key, value);
                 Console.WriteLine($"Migrated '{key}' to encrypted storage.");

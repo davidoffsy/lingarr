@@ -49,7 +49,7 @@ export const useSettingStore = defineStore('setting', {
             isValid: boolean,
             isJson: boolean = false
         ): Promise<void> {
-            if (typeof value === 'string' && (key === 'radarr_url' || key === 'sonarr_url')) {
+            if (typeof value === 'string' && (key === 'radarr_url' || key === 'sonarr_url' || key === 'plex_url')) {
                 value = value.replace(/\/+$/, '')
             }
 
