@@ -56,6 +56,28 @@ public class PlexMediaFileSelectorTests
     }
 
     [Fact]
+    public void SelectSubtitleStreams_PrefersSelectedPartAndFallsBackToAllParts()
+    {
+        var english = new PlexSubtitleStream { Id = 1, Key = "/library/streams/1", Codec = "srt" };
+        var french = new PlexSubtitleStream { Id = 2, Key = "/library/streams/2", Codec = "srt" };
+        var media = new[]
+        {
+            new PlexMedia
+            {
+                Selected = true,
+                Part =
+                [
+                    new PlexPart { Selected = true, File = "/selected.mp4", Stream = [english] },
+                    new PlexPart { Selected = false, File = "/other.mp4", Stream = [french] }
+                ]
+            }
+        };
+
+        var streams = PlexMediaFileSelector.SelectSubtitleStreams(media);
+        Assert.Equal(english, Assert.Single(streams));
+    }
+
+    [Fact]
     public void SelectFile_EmptyOrMissingParts_ReturnsNull()
     {
         Assert.Null(PlexMediaFileSelector.SelectFile(null));

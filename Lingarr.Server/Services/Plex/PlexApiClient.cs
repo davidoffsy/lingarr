@@ -101,4 +101,78 @@ public class PlexApiClient : IPlexApiClient
         var item = PlexMetadataMapper.FirstMetadataItem(document.RootElement);
         return item == null ? null : PlexMetadataMapper.FromJson(item.Value);
     }
+
+    public async Task<byte[]?> DownloadStream(
+        string baseUrl,
+        string accessToken,
+        string streamKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(baseUrl) ||
+            string.IsNullOrWhiteSpace(accessToken) ||
+            !PlexStreamKey.IsSafe(streamKey))
+        {
+            return null;
+        }
+
+        if (!Uri.TryCreate(baseUrl.TrimEnd('/'), UriKind.Absolute, out var parsedBase))
+        {
+            _logger.LogWarning("Plex stream download skipped: invalid URL {Url}", baseUrl);
+            return null;
+        }
+
+        var streamUri = new Uri(parsedBase, streamKey);
+        var client = _httpClientFactory.CreateClient("Plex");
+        using var request = new HttpRequestMessage(HttpMethod.Get, streamUri);
+        request.Headers.TryAddWithoutValidation("X-Plex-Token", accessToken);
+        request.Headers.TryAddWithoutValidation("X-Plex-Product", PlexHeaders.Product);
+
+        using var response = await client.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            _logger.LogInformation("Plex subtitle stream not found at {StreamKey}", streamKey);
+            return null;
+        }
+
+        response.EnsureSuccessStatusCode();
+
+        if (response.Content.Headers.ContentLength is > PlexStreamKey.MaxBytes)
+        {
+            _logger.LogWarning(
+                "Plex subtitle stream {StreamKey} is {Length} bytes; skipping.",
+                streamKey,
+                response.Content.Headers.ContentLength);
+            return null;
+        }
+
+        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[8192];
+        var total = 0;
+        while (true)
+        {
+            var read = await body.ReadAsync(chunk, cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            total += read;
+            if (total > PlexStreamKey.MaxBytes)
+            {
+                _logger.LogWarning(
+                    "Plex subtitle stream {StreamKey} exceeded {MaxBytes} bytes; skipping.",
+                    streamKey,
+                    PlexStreamKey.MaxBytes);
+                return null;
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return total == 0 ? null : buffer.ToArray();
+    }
 }

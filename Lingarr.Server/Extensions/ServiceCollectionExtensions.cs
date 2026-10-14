@@ -182,6 +182,7 @@ public static class ServiceCollectionExtensions
         builder.Services.AddScoped<IPlexRaterFilter, PlexRaterFilter>();
         builder.Services.AddScoped<IPlexMediaResolver, PlexMediaResolver>();
         builder.Services.AddScoped<IPlexRatingTrigger, PlexRatingTrigger>();
+        builder.Services.AddScoped<IPlexSubtitleImporter, PlexSubtitleImporter>();
         builder.Services.AddSingleton<IPlexWebhookParser, PlexWebhookParser>();
         builder.Services.AddSingleton<IPlexWebhookInbox, PlexWebhookInbox>();
         builder.Services.AddScoped<ISubtitleService, SubtitleService>();

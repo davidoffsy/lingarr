@@ -131,7 +131,8 @@ public class WebhookJobPlexTests
                 It.Is<Job>(job =>
                     job.Type == typeof(PlexRatingTriggerJob)
                     && Equals(job.Args[0], MediaType.Movie)
-                    && Equals(job.Args[1], 9)),
+                    && Equals(job.Args[1], 9)
+                    && Equals(job.Args[2], "1")),
                 It.IsAny<IState>()),
             Times.Once);
         _processor.Verify(

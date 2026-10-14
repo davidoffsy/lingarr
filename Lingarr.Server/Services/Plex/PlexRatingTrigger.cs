@@ -29,6 +29,7 @@ public class PlexRatingTrigger : IPlexRatingTrigger
     private readonly IEmbeddedSubtitleService _embeddedSubtitleService;
     private readonly ISettingService _settingService;
     private readonly ITranslationRequestService _translationRequestService;
+    private readonly IPlexSubtitleImporter _plexSubtitleImporter;
     private readonly ILogger<PlexRatingTrigger> _logger;
 
     public PlexRatingTrigger(
@@ -38,6 +39,7 @@ public class PlexRatingTrigger : IPlexRatingTrigger
         IEmbeddedSubtitleService embeddedSubtitleService,
         ISettingService settingService,
         ITranslationRequestService translationRequestService,
+        IPlexSubtitleImporter plexSubtitleImporter,
         ILogger<PlexRatingTrigger> logger)
     {
         _dbContext = dbContext;
@@ -46,6 +48,7 @@ public class PlexRatingTrigger : IPlexRatingTrigger
         _embeddedSubtitleService = embeddedSubtitleService;
         _settingService = settingService;
         _translationRequestService = translationRequestService;
+        _plexSubtitleImporter = plexSubtitleImporter;
         _logger = logger;
     }
 
@@ -91,12 +94,46 @@ public class PlexRatingTrigger : IPlexRatingTrigger
         var selected = PlexSourceSubtitleSelector.Select(candidates, sourceLanguages, ignoreCaptions);
         if (selected == null)
         {
-            _logger.LogInformation(
-                "Plex rating trigger skipped: no source subtitle for {MediaType} id {EntityId} ({FileName})",
-                mediaType,
-                media.Id,
-                media.FileName);
-            return;
+            IReadOnlyList<PlexSourceSubtitleCandidate> plexCandidates = [];
+            if (!string.IsNullOrWhiteSpace(resolved.RatingKey))
+            {
+                plexCandidates = await _plexSubtitleImporter.ListAsync(
+                    resolved.RatingKey,
+                    mediaType,
+                    cancellationToken);
+            }
+
+            selected = PlexSourceSubtitleSelector.Select(plexCandidates, sourceLanguages, ignoreCaptions);
+            if (selected == null)
+            {
+                _logger.LogInformation(
+                    "Plex rating trigger skipped: no source subtitle for {MediaType} id {EntityId} ({FileName}); sidecar languages [{SidecarLanguages}], plex text streams {PlexCount}",
+                    mediaType,
+                    media.Id,
+                    media.FileName,
+                    string.Join(", ", sidecars.Select(sidecar => sidecar.Language).Distinct()),
+                    plexCandidates.Count);
+                return;
+            }
+
+            if (selected.IsPlexStream)
+            {
+                var importedPath = await _plexSubtitleImporter.MaterializeAsync(
+                    selected,
+                    media.Path,
+                    media.FileName,
+                    cancellationToken);
+                if (string.IsNullOrEmpty(importedPath))
+                {
+                    _logger.LogInformation(
+                        "Plex rating trigger skipped: failed to import Plex subtitle {StreamKey} for {FileName}",
+                        selected.StreamKey,
+                        media.FileName);
+                    return;
+                }
+
+                selected = CloneWithPath(selected, importedPath);
+            }
         }
 
         if (targetLanguages.Count == 0)
@@ -215,6 +252,24 @@ public class PlexRatingTrigger : IPlexRatingTrigger
             return [];
         }
     }
+
+    private static PlexSourceSubtitleCandidate CloneWithPath(
+        PlexSourceSubtitleCandidate selected,
+        string path) =>
+        new()
+        {
+            Path = path,
+            Language = selected.Language,
+            Caption = selected.Caption,
+            Format = selected.Format,
+            IsEmbedded = false,
+            TrackIndex = selected.TrackIndex,
+            SidecarOrder = selected.SidecarOrder,
+            IsForced = selected.IsForced,
+            IsHearingImpaired = selected.IsHearingImpaired,
+            IsPlexStream = false,
+            StreamKey = selected.StreamKey
+        };
 
     private static List<string> CodesInOrder<T>(IEnumerable<T> languages) where T : ILanguage
     {

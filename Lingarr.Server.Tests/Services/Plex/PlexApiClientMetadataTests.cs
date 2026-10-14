@@ -62,6 +62,67 @@ public class PlexApiClientMetadataTests
         Assert.Equal("/library/metadata/42", handler.LastRequest?.RequestUri?.AbsolutePath);
         Assert.Equal("sign-in-token", handler.LastRequest?.Headers.GetValues("X-Plex-Token").First());
         Assert.Contains("application/json", handler.LastRequest?.Headers.GetValues("Accept") ?? []);
+        Assert.Empty(metadata.SubtitleStreams);
+    }
+
+    [Fact]
+    public async Task GetMetadata_ParsesOpenSubtitlesStreamAndIgnoresVideoAudio()
+    {
+        const string json = """
+            {
+              "MediaContainer": {
+                "Metadata": [
+                  {
+                    "type": "movie",
+                    "title": "Buddy",
+                    "Media": [
+                      {
+                        "selected": true,
+                        "Part": [
+                          {
+                            "selected": true,
+                            "file": "/mnt/115pan/movie/Buddy (2026)/Buddy (2026) WEBRip-1080p.mp4",
+                            "Stream": [
+                              { "id": 1, "streamType": 1, "codec": "h264" },
+                              { "id": 2, "streamType": 2, "codec": "aac" },
+                              {
+                                "id": 7701,
+                                "streamType": 3,
+                                "codec": "srt",
+                                "format": "srt",
+                                "language": "English",
+                                "languageTag": "en",
+                                "languageCode": "eng",
+                                "title": "OpenSubtitles",
+                                "key": "/library/streams/7701",
+                                "forced": false,
+                                "hearingImpaired": false
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+            """;
+        var handler = new StubHandler { Status = HttpStatusCode.OK, Body = json };
+        var client = CreateClient(handler);
+
+        var metadata = await client.GetMetadata("http://plex:32400", "token", "77015");
+
+        Assert.NotNull(metadata);
+        var stream = Assert.Single(metadata!.SubtitleStreams);
+        Assert.Equal(7701, stream.Id);
+        Assert.Equal(3, stream.StreamType);
+        Assert.Equal("srt", stream.Codec);
+        Assert.Equal("en", stream.LanguageTag);
+        Assert.Equal("eng", stream.LanguageCode);
+        Assert.Equal("OpenSubtitles", stream.Title);
+        Assert.Equal("/library/streams/7701", stream.Key);
+        Assert.False(stream.Forced);
     }
 
     [Fact]
@@ -128,6 +189,32 @@ public class PlexApiClientMetadataTests
 
         await Assert.ThrowsAsync<HttpRequestException>(
             () => client.GetMetadata("http://plex:32400", "bad-token", "1"));
+    }
+
+    [Fact]
+    public async Task DownloadStream_ReturnsBytes()
+    {
+        var handler = new StubHandler { Status = HttpStatusCode.OK, Body = "1\n00:00:01,000 --> 00:00:02,000\nHi\n" };
+        var client = CreateClient(handler);
+
+        var bytes = await client.DownloadStream("http://plex:32400", "token", "/library/streams/7701");
+
+        Assert.NotNull(bytes);
+        Assert.Equal(handler.Body, Encoding.UTF8.GetString(bytes!));
+        Assert.Equal("/library/streams/7701", handler.LastRequest?.RequestUri?.AbsolutePath);
+        Assert.Equal("token", handler.LastRequest?.Headers.GetValues("X-Plex-Token").First());
+    }
+
+    [Fact]
+    public async Task DownloadStream_UnsafeKey_DoesNotSendRequest()
+    {
+        var handler = new StubHandler { Status = HttpStatusCode.OK, Body = "nope" };
+        var client = CreateClient(handler);
+
+        var bytes = await client.DownloadStream("http://plex:32400", "token", "http://evil.example/x");
+
+        Assert.Null(bytes);
+        Assert.Null(handler.LastRequest);
     }
 
     [Fact]

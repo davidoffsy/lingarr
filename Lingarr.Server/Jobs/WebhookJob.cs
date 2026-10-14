@@ -177,6 +177,7 @@ public class WebhookJob
             payload.Metadata?.RatingKey,
             resolved.MappedPath);
 
-        _backgroundJobClient.Enqueue<PlexRatingTriggerJob>(job => job.Execute(mediaType, resolved.EntityId, CancellationToken.None));
+        _backgroundJobClient.Enqueue<PlexRatingTriggerJob>(job =>
+            job.Execute(mediaType, resolved.EntityId, resolved.RatingKey, CancellationToken.None));
     }
 }

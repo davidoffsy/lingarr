@@ -7,6 +7,7 @@ public static class PlexMetadataMapper
 {
     public static PlexMetadata FromJson(JsonElement item)
     {
+        var media = PlexJsonElement.ReadMedia(item);
         return new PlexMetadata
         {
             Type = PlexJsonElement.GetString(item, "type"),
@@ -16,8 +17,9 @@ public static class PlexMetadataMapper
             GrandparentTitle = PlexJsonElement.GetString(item, "grandparentTitle"),
             ParentIndex = PlexJsonElement.GetInt32(item, "parentIndex"),
             Index = PlexJsonElement.GetInt32(item, "index"),
-            File = PlexMediaFileSelector.SelectFile(PlexJsonElement.ReadMedia(item)),
-            Guids = PlexJsonElement.CollectGuidIds(item)
+            File = PlexMediaFileSelector.SelectFile(media),
+            Guids = PlexJsonElement.CollectGuidIds(item),
+            SubtitleStreams = PlexMediaFileSelector.SelectSubtitleStreams(media)
         };
     }
 

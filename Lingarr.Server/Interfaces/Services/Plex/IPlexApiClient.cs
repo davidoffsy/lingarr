@@ -19,4 +19,15 @@ public interface IPlexApiClient
         string accessToken,
         string ratingKey,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Downloads a PMS subtitle stream (OpenSubtitles sideload, etc.).
+    /// Returns <c>null</c> on 404 or when the body is empty / too large.
+    /// Throws on 401, 5xx, or timeout so Hangfire can retry.
+    /// </summary>
+    Task<byte[]?> DownloadStream(
+        string baseUrl,
+        string accessToken,
+        string streamKey,
+        CancellationToken cancellationToken = default);
 }

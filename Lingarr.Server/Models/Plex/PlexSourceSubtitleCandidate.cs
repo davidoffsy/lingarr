@@ -15,4 +15,15 @@ public class PlexSourceSubtitleCandidate
     public int SidecarOrder { get; init; }
     public bool IsForced { get; init; }
     public bool IsHearingImpaired { get; init; }
+
+    /// <summary>
+    /// True when the bytes still live in Plex (OpenSubtitles sideload, etc.)
+    /// and must be downloaded before <see cref="Path"/> is a real sidecar.
+    /// </summary>
+    public bool IsPlexStream { get; init; }
+
+    /// <summary>
+    /// PMS path such as <c>/library/streams/12345</c>.
+    /// </summary>
+    public string? StreamKey { get; init; }
 }

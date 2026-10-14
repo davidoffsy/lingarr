@@ -9,6 +9,7 @@ using Lingarr.Core.Entities;
 using Lingarr.Core.Enum;
 using Lingarr.Core.Interfaces;
 using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Interfaces.Services.Plex;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Models.Plex;
@@ -32,6 +33,7 @@ public class PlexRatingTriggerTests : IDisposable
     private readonly Mock<IEmbeddedSubtitleService> _embedded = new();
     private readonly Mock<ISettingService> _settings = new();
     private readonly Mock<ITranslationRequestService> _requests = new();
+    private readonly Mock<IPlexSubtitleImporter> _importer = new();
     private readonly PlexRatingTrigger _trigger;
     private readonly Movie _movie;
 
@@ -66,6 +68,11 @@ public class PlexRatingTriggerTests : IDisposable
             .ReturnsAsync(Array.Empty<EmbeddedSubtitleTrack>());
         _requests.Setup(s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()))
             .ReturnsAsync(1);
+        _importer.Setup(i => i.ListAsync(
+                It.IsAny<string?>(),
+                It.IsAny<MediaType>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PlexSourceSubtitleCandidate>());
 
         _trigger = new PlexRatingTrigger(
             _db,
@@ -74,6 +81,7 @@ public class PlexRatingTriggerTests : IDisposable
             _embedded.Object,
             _settings.Object,
             _requests.Object,
+            _importer.Object,
             NullLogger<PlexRatingTrigger>.Instance);
     }
 
@@ -190,6 +198,101 @@ public class PlexRatingTriggerTests : IDisposable
     }
 
     [Fact]
+    public async Task Enqueue_SidecarPresent_DoesNotQueryPlexImporter()
+    {
+        SetupSidecar(SidecarPath, "en");
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        _importer.Verify(
+            i => i.ListAsync(It.IsAny<string?>(), It.IsAny<MediaType>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _importer.Verify(
+            i => i.MaterializeAsync(
+                It.IsAny<PlexSourceSubtitleCandidate>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Enqueue_NoLocalSource_ImportsPlexOpenSubtitlesAndCreatesRequest()
+    {
+        const string imported = "/movies/Foo/Foo.en.srt";
+        var plexCandidate = new PlexSourceSubtitleCandidate
+        {
+            Path = string.Empty,
+            Language = "en",
+            Format = ".srt",
+            IsPlexStream = true,
+            StreamKey = "/library/streams/12345"
+        };
+        _importer.Setup(i => i.ListAsync("42", MediaType.Movie, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { plexCandidate });
+        _importer.Setup(i => i.MaterializeAsync(
+                It.Is<PlexSourceSubtitleCandidate>(c => c.StreamKey == "/library/streams/12345"),
+                _movie.Path!,
+                _movie.FileName!,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(imported);
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        _requests.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.SubtitlePath == imported
+                && t.SourceLanguage == "en"
+                && t.TargetLanguage == "zh"
+                && t.SubtitleFormat == ".srt")),
+            Times.Once);
+        _importer.Verify(
+            i => i.MaterializeAsync(
+                It.IsAny<PlexSourceSubtitleCandidate>(),
+                _movie.Path!,
+                _movie.FileName!,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        VerifyNeverExtracts();
+    }
+
+    [Fact]
+    public async Task Enqueue_PlexImportFails_DoesNotCreateRequest()
+    {
+        var plexCandidate = new PlexSourceSubtitleCandidate
+        {
+            Path = string.Empty,
+            Language = "en",
+            Format = ".srt",
+            IsPlexStream = true,
+            StreamKey = "/library/streams/9"
+        };
+        _importer.Setup(i => i.ListAsync("42", MediaType.Movie, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { plexCandidate });
+        _importer.Setup(i => i.MaterializeAsync(
+                It.IsAny<PlexSourceSubtitleCandidate>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        _requests.Verify(s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Enqueue_NoRatingKey_DoesNotCallImporter()
+    {
+        await _trigger.EnqueueAsync(ResolvedMovie(ratingKey: null));
+
+        _importer.Verify(
+            i => i.ListAsync(It.IsAny<string?>(), It.IsAny<MediaType>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _requests.Verify(s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Enqueue_EmbeddedTargetTrack_DoesNotCountAsDone()
     {
         _embedded.Setup(s => s.ProbeAsync(MkvPath, It.IsAny<CancellationToken>()))
@@ -212,8 +315,8 @@ public class PlexRatingTriggerTests : IDisposable
             Times.Once);
     }
 
-    private PlexMediaResolveResult ResolvedMovie() =>
-        PlexMediaResolveResult.Hit(MediaType.Movie, _movie.Id, MkvPath, "42", "Foo");
+    private PlexMediaResolveResult ResolvedMovie(string? ratingKey = "42") =>
+        PlexMediaResolveResult.Hit(MediaType.Movie, _movie.Id, MkvPath, ratingKey, "Foo");
 
     private void SetupLanguages(string source, string target)
     {

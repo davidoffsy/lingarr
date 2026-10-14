@@ -20,10 +20,14 @@ public class PlexRatingTriggerJob
     /// </summary>
     [AutomaticRetry(Attempts = 3)]
     [Queue("translation")]
-    public Task Execute(MediaType mediaType, int entityId, CancellationToken cancellationToken = default)
+    public Task Execute(
+        MediaType mediaType,
+        int entityId,
+        string? ratingKey,
+        CancellationToken cancellationToken = default)
     {
         return _plexRatingTrigger.EnqueueAsync(
-            PlexMediaResolveResult.Hit(mediaType, entityId, null, null, null),
+            PlexMediaResolveResult.Hit(mediaType, entityId, null, ratingKey, null),
             cancellationToken);
     }
 }

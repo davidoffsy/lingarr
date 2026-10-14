@@ -11,6 +11,7 @@ public class PlexMetadata
     public int? Index { get; init; }
     public string? File { get; init; }
     public IReadOnlyList<string> Guids { get; init; } = [];
+    public IReadOnlyList<PlexSubtitleStream> SubtitleStreams { get; init; } = [];
 }
 
 public class PlexMedia
@@ -23,6 +24,7 @@ public class PlexPart
 {
     public bool Selected { get; set; }
     public string? File { get; set; }
+    public List<PlexSubtitleStream>? Stream { get; set; }
 }
 
 public class PlexGuid

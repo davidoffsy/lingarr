@@ -166,7 +166,56 @@ internal static class PlexJsonElement
             list.Add(new PlexPart
             {
                 Selected = GetBool(item, "selected"),
-                File = GetString(item, "file")
+                File = GetString(item, "file"),
+                Stream = ReadSubtitleStreams(item)
+            });
+        }
+
+        return list;
+    }
+
+    private static List<PlexSubtitleStream>? ReadSubtitleStreams(JsonElement part)
+    {
+        var streamElement = GetProperty(part, "Stream");
+        if (streamElement.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        var list = new List<PlexSubtitleStream>();
+        foreach (var item in EnumerateObjectOrArray(streamElement))
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var streamType = GetInt32(item, "streamType") ?? 0;
+            if (streamType != PlexSubtitleStream.SubtitleStreamType)
+            {
+                continue;
+            }
+
+            var id = GetInt32(item, "id") ?? 0;
+            var key = GetString(item, "key");
+            if (string.IsNullOrWhiteSpace(key) && id > 0)
+            {
+                key = "/library/streams/" + id.ToString(CultureInfo.InvariantCulture);
+            }
+
+            list.Add(new PlexSubtitleStream
+            {
+                Id = id,
+                StreamType = streamType,
+                Key = key,
+                File = GetString(item, "file"),
+                Codec = GetString(item, "codec"),
+                Format = GetString(item, "format"),
+                LanguageTag = GetString(item, "languageTag"),
+                LanguageCode = GetString(item, "languageCode"),
+                Title = GetString(item, "title"),
+                Forced = GetBool(item, "forced"),
+                HearingImpaired = GetBool(item, "hearingImpaired")
             });
         }
 
