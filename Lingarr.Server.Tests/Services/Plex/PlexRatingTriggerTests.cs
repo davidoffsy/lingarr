@@ -198,6 +198,162 @@ public class PlexRatingTriggerTests : IDisposable
     }
 
     [Fact]
+    public async Task Enqueue_UniqueUndeterminedEmbedded_CreatesRequestWithUnknownSource()
+    {
+        _embedded.Setup(s => s.ProbeAsync(MkvPath, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new EmbeddedSubtitleTrack
+                {
+                    Index = 2,
+                    CodecName = "subrip",
+                    Language = EmbeddedSubtitleTrack.UndeterminedLanguage,
+                    Extension = ".srt"
+                }
+            });
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        var expected = EmbeddedSubtitlePlaceholder.Create(MkvPath, 2);
+        _requests.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.SubtitlePath == expected
+                && t.SourceLanguage == EmbeddedSubtitleTrack.UndeterminedLanguage
+                && t.TargetLanguage == "zh"
+                && t.SubtitleFormat == ".srt")),
+            Times.Once);
+        VerifyNeverExtracts();
+    }
+
+    [Fact]
+    public async Task Enqueue_MultipleUndeterminedEmbedded_DoesNotCreateRequest()
+    {
+        _embedded.Setup(s => s.ProbeAsync(MkvPath, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new EmbeddedSubtitleTrack
+                {
+                    Index = 2,
+                    CodecName = "subrip",
+                    Language = EmbeddedSubtitleTrack.UndeterminedLanguage,
+                    Extension = ".srt"
+                },
+                new EmbeddedSubtitleTrack
+                {
+                    Index = 3,
+                    CodecName = "subrip",
+                    Language = EmbeddedSubtitleTrack.UnknownLanguage,
+                    Extension = ".srt"
+                }
+            });
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        _requests.Verify(s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()), Times.Never);
+        VerifyNeverExtracts();
+    }
+
+    [Fact]
+    public async Task Enqueue_UntaggedSidecar_CreatesRequestWithUnknownSourceLanguage()
+    {
+        const string untaggedPath = "/movies/Foo/Foo.srt";
+        SetupSidecar(untaggedPath, "unknown");
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        _requests.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.MediaId == _movie.Id
+                && t.MediaType == MediaType.Movie
+                && t.SubtitlePath == untaggedPath
+                && t.SourceLanguage == "unknown"
+                && t.TargetLanguage == "zh"
+                && t.SubtitleFormat == ".srt")),
+            Times.Once);
+        _importer.Verify(
+            i => i.ListAsync("42", MediaType.Movie, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _importer.Verify(
+            i => i.MaterializeAsync(
+                It.IsAny<PlexSourceSubtitleCandidate>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+        VerifyNeverExtracts();
+    }
+
+    [Fact]
+    public async Task Enqueue_UntaggedSidecar_PrefersTaggedPlexStream()
+    {
+        const string untaggedPath = "/movies/Foo/Foo.srt";
+        const string imported = "/movies/Foo/Foo.en.srt";
+        SetupSidecar(untaggedPath, "unknown");
+        SetupPlexImport("/library/streams/12345", imported);
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        _requests.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.SubtitlePath == imported
+                && t.SourceLanguage == "en"
+                && t.TargetLanguage == "zh")),
+            Times.Once);
+        _importer.Verify(
+            i => i.MaterializeAsync(
+                It.IsAny<PlexSourceSubtitleCandidate>(),
+                _movie.Path!,
+                _movie.FileName!,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        VerifyNeverExtracts();
+    }
+
+    [Fact]
+    public async Task Enqueue_UniqueUndeterminedEmbedded_PrefersTaggedPlexStream()
+    {
+        const string imported = "/movies/Foo/Foo.en.srt";
+        _embedded.Setup(s => s.ProbeAsync(MkvPath, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new EmbeddedSubtitleTrack
+                {
+                    Index = 2,
+                    CodecName = "subrip",
+                    Language = EmbeddedSubtitleTrack.UndeterminedLanguage,
+                    Extension = ".srt"
+                }
+            });
+        SetupPlexImport("/library/streams/12345", imported);
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        _requests.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.SubtitlePath == imported
+                && t.SourceLanguage == "en")),
+            Times.Once);
+        VerifyNeverExtracts();
+    }
+
+    [Fact]
+    public async Task Enqueue_PlexImportFails_FallsBackToUntaggedSidecar()
+    {
+        const string untaggedPath = "/movies/Foo/Foo.srt";
+        SetupSidecar(untaggedPath, "unknown");
+        SetupPlexImport("/library/streams/9", importedPath: null);
+
+        await _trigger.EnqueueAsync(ResolvedMovie());
+
+        _requests.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.SubtitlePath == untaggedPath
+                && t.SourceLanguage == "unknown")),
+            Times.Once);
+        VerifyNeverExtracts();
+    }
+
+    [Fact]
     public async Task Enqueue_SidecarPresent_DoesNotQueryPlexImporter()
     {
         SetupSidecar(SidecarPath, "en");
@@ -324,6 +480,26 @@ public class PlexRatingTriggerTests : IDisposable
             .ReturnsAsync(new List<SourceLanguage> { new() { Code = source, Name = "English" } });
         _settings.Setup(s => s.GetSettingAsJson<TargetLanguage>(SettingKeys.Translation.TargetLanguages))
             .ReturnsAsync(new List<TargetLanguage> { new() { Code = target, Name = "Chinese" } });
+    }
+
+    private void SetupPlexImport(string streamKey, string? importedPath, string language = "en")
+    {
+        var plexCandidate = new PlexSourceSubtitleCandidate
+        {
+            Path = string.Empty,
+            Language = language,
+            Format = ".srt",
+            IsPlexStream = true,
+            StreamKey = streamKey
+        };
+        _importer.Setup(i => i.ListAsync("42", MediaType.Movie, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { plexCandidate });
+        _importer.Setup(i => i.MaterializeAsync(
+                It.Is<PlexSourceSubtitleCandidate>(c => c.StreamKey == streamKey),
+                _movie.Path!,
+                _movie.FileName!,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(importedPath);
     }
 
     private void SetupSidecar(string path, string language) =>

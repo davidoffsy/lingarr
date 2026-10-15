@@ -33,7 +33,8 @@ public static class PlexSubtitleCandidateMerger
             return candidates;
         }
 
-        foreach (var track in tracks.Where(track => track.CanAutoTranslate))
+        // Include und/unknown text tracks so the selector can fall back to a unique one.
+        foreach (var track in tracks)
         {
             var key = EmbeddedSubtitleMerger.LanguageCaptionKey(track.Language, track.Caption);
             if (claimedBySidecar.Contains(key))

@@ -91,49 +91,25 @@ public class PlexRatingTrigger : IPlexRatingTrigger
             await _settingService.GetSettingAsJson<TargetLanguage>(SettingKeys.Translation.TargetLanguages));
         var ignoreCaptions = await _settingService.GetSetting(SettingKeys.Translation.IgnoreCaptions) == "true";
 
-        var selected = PlexSourceSubtitleSelector.Select(candidates, sourceLanguages, ignoreCaptions);
+        var (selected, plexCount) = await ResolveSourceAsync(
+            candidates,
+            sourceLanguages,
+            ignoreCaptions,
+            resolved.RatingKey,
+            mediaType,
+            media.Path,
+            media.FileName,
+            cancellationToken);
         if (selected == null)
         {
-            IReadOnlyList<PlexSourceSubtitleCandidate> plexCandidates = [];
-            if (!string.IsNullOrWhiteSpace(resolved.RatingKey))
-            {
-                plexCandidates = await _plexSubtitleImporter.ListAsync(
-                    resolved.RatingKey,
-                    mediaType,
-                    cancellationToken);
-            }
-
-            selected = PlexSourceSubtitleSelector.Select(plexCandidates, sourceLanguages, ignoreCaptions);
-            if (selected == null)
-            {
-                _logger.LogInformation(
-                    "Plex rating trigger skipped: no source subtitle for {MediaType} id {EntityId} ({FileName}); sidecar languages [{SidecarLanguages}], plex text streams {PlexCount}",
-                    mediaType,
-                    media.Id,
-                    media.FileName,
-                    string.Join(", ", sidecars.Select(sidecar => sidecar.Language).Distinct()),
-                    plexCandidates.Count);
-                return;
-            }
-
-            if (selected.IsPlexStream)
-            {
-                var importedPath = await _plexSubtitleImporter.MaterializeAsync(
-                    selected,
-                    media.Path,
-                    media.FileName,
-                    cancellationToken);
-                if (string.IsNullOrEmpty(importedPath))
-                {
-                    _logger.LogInformation(
-                        "Plex rating trigger skipped: failed to import Plex subtitle {StreamKey} for {FileName}",
-                        selected.StreamKey,
-                        media.FileName);
-                    return;
-                }
-
-                selected = CloneWithPath(selected, importedPath);
-            }
+            _logger.LogInformation(
+                "Plex rating trigger skipped: no source subtitle for {MediaType} id {EntityId} ({FileName}); sidecar languages [{SidecarLanguages}], plex text streams {PlexCount}",
+                mediaType,
+                media.Id,
+                media.FileName,
+                string.Join(", ", sidecars.Select(sidecar => sidecar.Language).Distinct()),
+                plexCount);
+            return;
         }
 
         if (targetLanguages.Count == 0)
@@ -210,6 +186,74 @@ public class PlexRatingTrigger : IPlexRatingTrigger
                 mediaType,
                 media.Id);
         }
+    }
+
+    /// <summary>
+    /// Configured local language, then tagged Plex OpenSubtitles, then untagged
+    /// sidecar, then a unique undetermined embedded track.
+    /// </summary>
+    private async Task<(PlexSourceSubtitleCandidate? Selected, int PlexCount)> ResolveSourceAsync(
+        IReadOnlyList<PlexSourceSubtitleCandidate> localCandidates,
+        IReadOnlyList<string> sourceLanguages,
+        bool ignoreCaptions,
+        string? ratingKey,
+        MediaType mediaType,
+        string mediaPath,
+        string mediaFileName,
+        CancellationToken cancellationToken)
+    {
+        if (sourceLanguages.Count == 0)
+        {
+            return (null, 0);
+        }
+
+        var selected = PlexSourceSubtitleSelector.SelectConfigured(
+            localCandidates,
+            sourceLanguages,
+            ignoreCaptions);
+        if (selected != null)
+        {
+            return (selected, 0);
+        }
+
+        IReadOnlyList<PlexSourceSubtitleCandidate> plexCandidates = [];
+        if (!string.IsNullOrWhiteSpace(ratingKey))
+        {
+            plexCandidates = await _plexSubtitleImporter.ListAsync(
+                ratingKey,
+                mediaType,
+                cancellationToken);
+
+            selected = PlexSourceSubtitleSelector.SelectConfigured(
+                plexCandidates,
+                sourceLanguages,
+                ignoreCaptions);
+            if (selected?.IsPlexStream == true)
+            {
+                var importedPath = await _plexSubtitleImporter.MaterializeAsync(
+                    selected,
+                    mediaPath,
+                    mediaFileName,
+                    cancellationToken);
+                if (string.IsNullOrEmpty(importedPath))
+                {
+                    _logger.LogInformation(
+                        "Plex subtitle import failed for {StreamKey} ({FileName}); falling back to untagged local sources.",
+                        selected.StreamKey,
+                        mediaFileName);
+                    selected = null;
+                }
+                else
+                {
+                    selected = CloneWithPath(selected, importedPath);
+                }
+            }
+        }
+
+        selected ??= PlexSourceSubtitleSelector.SelectUntaggedSidecar(localCandidates, ignoreCaptions)
+            ?? PlexSourceSubtitleSelector.SelectUniqueUndeterminedEmbedded(localCandidates, ignoreCaptions);
+
+        return (selected, plexCandidates.Count);
     }
 
     private async Task<IMedia?> LoadMediaAsync(

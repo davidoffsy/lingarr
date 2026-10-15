@@ -75,6 +75,132 @@ public class PlexSourceSubtitleSelectorTests
     }
 
     [Fact]
+    public void SelectConfigured_IgnoresUntaggedSidecarAndUndeterminedEmbedded()
+    {
+        var candidates = PlexSubtitleCandidateMerger.Merge(
+            [Sidecar("/movies/Foo/Foo.srt", "unknown")],
+            [Track(2, EmbeddedSubtitleTrack.UndeterminedLanguage)],
+            MkvPath);
+
+        var selected = PlexSourceSubtitleSelector.SelectConfigured(
+            candidates,
+            EnglishSources,
+            ignoreCaptions: false);
+
+        Assert.Null(selected);
+    }
+
+    [Fact]
+    public void Select_UniqueUndeterminedEmbedded_IsSelected()
+    {
+        var selected = Select(
+            sidecars: [],
+            tracks: [Track(2, EmbeddedSubtitleTrack.UndeterminedLanguage)]);
+
+        Assert.NotNull(selected);
+        Assert.True(selected.IsEmbedded);
+        Assert.Equal(2, selected.TrackIndex);
+        Assert.Equal(EmbeddedSubtitleTrack.UndeterminedLanguage, selected.Language);
+    }
+
+    [Fact]
+    public void Select_UniqueUndeterminedEmbedded_IgnoresForcedCompanion()
+    {
+        var selected = Select(
+            sidecars: [],
+            tracks:
+            [
+                Track(2, EmbeddedSubtitleTrack.UndeterminedLanguage, forced: true, caption: "forced"),
+                Track(3, EmbeddedSubtitleTrack.UnknownLanguage)
+            ]);
+
+        Assert.NotNull(selected);
+        Assert.Equal(3, selected.TrackIndex);
+        Assert.False(selected.IsForced);
+        Assert.Equal(EmbeddedSubtitleTrack.UnknownLanguage, selected.Language);
+    }
+
+    [Fact]
+    public void Select_UniqueFullUndeterminedEmbedded_PrefersNonSdh()
+    {
+        var selected = Select(
+            sidecars: [],
+            tracks:
+            [
+                Track(2, EmbeddedSubtitleTrack.UndeterminedLanguage, hearingImpaired: true, caption: "sdh"),
+                Track(3, EmbeddedSubtitleTrack.UndeterminedLanguage)
+            ]);
+
+        Assert.NotNull(selected);
+        Assert.Equal(3, selected.TrackIndex);
+        Assert.False(selected.IsHearingImpaired);
+    }
+
+    [Fact]
+    public void Select_UniqueSdhUndeterminedEmbedded_IsSelected()
+    {
+        var selected = Select(
+            sidecars: [],
+            tracks: [Track(2, EmbeddedSubtitleTrack.UndeterminedLanguage, hearingImpaired: true, caption: "sdh")]);
+
+        Assert.NotNull(selected);
+        Assert.Equal(2, selected.TrackIndex);
+        Assert.True(selected.IsHearingImpaired);
+    }
+
+    [Fact]
+    public void Select_UniqueSdhUndeterminedEmbedded_IgnoreCaptions_IsNotSelected()
+    {
+        var selected = Select(
+            sidecars: [],
+            tracks: [Track(2, EmbeddedSubtitleTrack.UndeterminedLanguage, hearingImpaired: true, caption: "sdh")],
+            ignoreCaptions: true);
+
+        Assert.Null(selected);
+    }
+
+    [Fact]
+    public void Select_UntaggedSidecar_PrefersOverUniqueUndeterminedEmbedded()
+    {
+        var selected = Select(
+            sidecars: [Sidecar("/movies/Foo/Foo.srt", "unknown")],
+            tracks: [Track(2, EmbeddedSubtitleTrack.UndeterminedLanguage)]);
+
+        Assert.NotNull(selected);
+        Assert.False(selected.IsEmbedded);
+        Assert.Equal("/movies/Foo/Foo.srt", selected.Path);
+    }
+
+    [Fact]
+    public void Select_FallsBackToUntaggedSidecarWhenNoConfiguredSourceExists()
+    {
+        var selected = Select(
+            sidecars: [Sidecar("/movies/Foo/Foo.srt", "unknown")],
+            tracks: [Track(2, "ja")]);
+
+        Assert.NotNull(selected);
+        Assert.False(selected.IsEmbedded);
+        Assert.Equal("unknown", selected.Language);
+        Assert.Equal("/movies/Foo/Foo.srt", selected.Path);
+    }
+
+    [Fact]
+    public void Select_PrefersConfiguredLanguageOverUntaggedSidecar()
+    {
+        var selected = Select(
+            sidecars:
+            [
+                Sidecar("/movies/Foo/Foo.srt", "unknown"),
+                Sidecar("/movies/Foo/Foo.en.srt", "en")
+            ],
+            tracks: []);
+
+        Assert.NotNull(selected);
+        Assert.Equal("en", selected.Language);
+        Assert.Equal("/movies/Foo/Foo.en.srt", selected.Path);
+    }
+
+    [Fact]
     public void Select_LanguageNotInSourceLanguages_IsNotSelected()
     {
         var selected = Select(
