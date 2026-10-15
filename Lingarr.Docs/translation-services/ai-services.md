@@ -26,6 +26,14 @@ All AI services follow the same pattern: select the service, provide an API key,
 
 Every setting can also be provided as an environment variable, listed per service below. See [Configuration](/getting-started/configuration) for more details.
 
+## Untagged source subtitles
+
+Release groups sometimes ship `Movie.mp4` plus `Movie.srt` with no language tag in the filename. Lingarr labels those files `unknown`.
+
+Traditional services (Yandex, Google, DeepL, LibreTranslate, Bing, Microsoft) have no `unknown` language pair and are skipped. AI services detect the language from the subtitle text — these files are typically English — and translate to the target language.
+
+Put an AI service in the translation chain, as primary or as a fallback after Yandex or Google, so untagged files can be translated. Automatic and bulk jobs also fall back to an untagged sidecar when no configured source language is present.
+
 ## Prompts
 
 Each request is built from two templates, and both apply to every AI service.
@@ -58,7 +66,7 @@ Both templates accept the same placeholders:
 | `{lineToTranslate}` | The subtitle line being translated. |
 | `{contextBefore}` | The lines preceding it, as many as the context setting allows. Empty when that setting is `0`. Plain lines by default, JSON objects with **Structured context with translations** enabled (see below). |
 | `{contextAfter}` | The lines following it, as many as the context setting allows. Empty when that setting is `0`. Same form as `{contextBefore}`, without translations. |
-| `{sourceLanguage}` | The language being translated from. |
+| `{sourceLanguage}` | The language being translated from. For untagged files (`unknown` / `und`) this becomes `the source language (detect it automatically; typically English)`, or `auto` when language-code format is enabled. |
 | `{targetLanguage}` | The language being translated to. |
 | `{model}` | The configured model. |
 

@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Lingarr.Contracts.Exceptions;
+using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Models.Batch;
 using Lingarr.Core.Configuration;
 using Lingarr.Server.Exceptions;
@@ -57,6 +58,17 @@ public class LocalAiServiceTests
             _loggerMock.Object,
             new LanguageCodeService(),
             new RequestTemplateService());
+    }
+
+    [Fact]
+    public async Task GetLanguagePair_UnknownToZhCn_IsAccepted()
+    {
+        var pair = await _service.GetLanguagePair("unknown", "zh-CN", CancellationToken.None);
+
+        Assert.NotNull(pair);
+        Assert.Equal("unknown", pair.Source);
+        Assert.Equal("zh-CN", pair.Target);
+        Assert.Equal(MatchTier.Exact, pair.Tier);
     }
 
     [Fact]

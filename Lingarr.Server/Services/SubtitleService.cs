@@ -441,7 +441,13 @@ public class SubtitleService : ISubtitleService
         var sourceLanguage = availableLanguages.FirstOrDefault(lang => sourceCodes.Contains(lang));
         if (sourceLanguage == null)
         {
-            return null;
+            // Untagged sidecars (Movie.srt next to Movie.mp4) are labeled unknown.
+            // Prefer a configured source language; otherwise let AI detect it.
+            sourceLanguage = availableLanguages.FirstOrDefault(lang => _languageCodeService.IsUnknown(lang));
+            if (sourceLanguage == null)
+            {
+                return null;
+            }
         }
 
         var sourceSubtitle = ignoreCaptions == "true"

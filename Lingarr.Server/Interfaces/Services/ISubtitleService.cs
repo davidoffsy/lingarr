@@ -1,4 +1,4 @@
-﻿using Lingarr.Contracts.Translation;
+using Lingarr.Contracts.Translation;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 
@@ -75,6 +75,7 @@ public interface ISubtitleService
     /// <summary>
     /// Selects the source subtitle from matching subtitles by finding the first available source language
     /// and selecting the appropriate subtitle file, respecting the ignoreCaptions setting.
+    /// When no configured source language is present, falls back to an untagged (<c>unknown</c>/<c>und</c>) sidecar.
     /// </summary>
     /// <param name="subtitles">The list of subtitle files to search.</param>
     /// <param name="sourceCodes">The set of acceptable source language codes.</param>

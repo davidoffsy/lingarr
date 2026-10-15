@@ -39,6 +39,14 @@ public class LanguageCodeService
 
     public bool Validate(string? languageCode) => FindCulture(languageCode) != null;
 
+    /// <summary>
+    /// True for untagged sidecars (<c>unknown</c>) and undetermined tracks (<c>und</c>).
+    /// These are not culture codes; AI services detect the language from subtitle text.
+    /// </summary>
+    public bool IsUnknown(string? languageCode) =>
+        string.Equals(languageCode, "unknown", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(languageCode, "und", StringComparison.OrdinalIgnoreCase);
+
     public string GetCultureName(string languageCode) =>
         FindCulture(languageCode)?.EnglishName
         ?? throw new ArgumentException($"Invalid language code: '{languageCode}'", nameof(languageCode));

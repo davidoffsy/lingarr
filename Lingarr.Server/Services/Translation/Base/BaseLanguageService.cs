@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Models.Batch;
@@ -120,13 +120,29 @@ public abstract class BaseLanguageService : BaseTranslationService
             return null;
         }
 
-        // Services without a language list, accept any culture-valid pair.
+        // Services without a language list (AI) accept any culture-valid pair, and
+        // unknown/undetermined sources so the model can detect the language from the text.
         if (languages.Count > 0)
         {
             return await base.GetLanguagePair(requestedSource, requestedTarget, cancellationToken);
         }
 
-        if (!_languageCodeService.Validate(requestedSource) || !_languageCodeService.Validate(requestedTarget))
+        if (!_languageCodeService.Validate(requestedTarget))
+        {
+            return null;
+        }
+
+        if (_languageCodeService.IsUnknown(requestedSource))
+        {
+            return new LanguagePair
+            {
+                Source = requestedSource,
+                Target = requestedTarget,
+                Tier = MatchTier.Exact
+            };
+        }
+
+        if (!_languageCodeService.Validate(requestedSource))
         {
             return null;
         }
@@ -204,9 +220,25 @@ public abstract class BaseLanguageService : BaseTranslationService
         var useLanguageCodes = languageCodeFormatSetting == "true";
         _replacements = new Dictionary<string, string>
         {
-            ["sourceLanguage"] = useLanguageCodes ? sourceLanguage : GetFullLanguageName(sourceLanguage),
+            ["sourceLanguage"] = DescribeSourceLanguage(sourceLanguage, useLanguageCodes),
             ["targetLanguage"] = useLanguageCodes ? targetLanguage : GetFullLanguageName(targetLanguage)
         };
+    }
+
+    /// <summary>
+    /// Prompt text for <c>{sourceLanguage}</c>. Untagged files ask the model to detect
+    /// the language from the subtitle text; most of those files are English.
+    /// </summary>
+    private string DescribeSourceLanguage(string sourceLanguage, bool useLanguageCodes)
+    {
+        if (_languageCodeService.IsUnknown(sourceLanguage))
+        {
+            return useLanguageCodes
+                ? "auto"
+                : "the source language (detect it automatically; typically English)";
+        }
+
+        return useLanguageCodes ? sourceLanguage : GetFullLanguageName(sourceLanguage);
     }
     
     /// <summary>

@@ -618,6 +618,40 @@ public class GoogleGeminiServiceTests
     }
 
     [Fact]
+    public async Task TranslateAsync_UnknownSource_AsksModelToDetectLanguage()
+    {
+        var settings = GetDefaultSettings();
+        settings[SettingKeys.Translation.Gemini.RequestTemplate] =
+            "{\"systemInstruction\":{\"parts\":[{\"text\":\"{systemPrompt}\"}]},\"contents\":[{\"parts\":[{\"text\":\"{lineToTranslate}\"}]}]}";
+        settings[SettingKeys.Translation.AiPrompt] = "Translate from {sourceLanguage} to {targetLanguage}";
+        _settingsMock.Setup(s => s.GetSettings(It.IsAny<IEnumerable<string>>())).ReturnsAsync(settings);
+
+        var geminiResponse = new { candidates = new[] { new { content = new { parts = new[] { new { text = "你好" } } } } } };
+
+        string? requestBody = null;
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) =>
+                requestBody = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult())
+            .ReturnsAsync(new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(JsonSerializer.Serialize(geminiResponse), Encoding.UTF8, "application/json")
+            });
+
+        var result = await _service.TranslateAsync(
+            "Hello", "unknown", "zh-CN", null, null, CancellationToken.None);
+
+        Assert.Equal("你好", result);
+        Assert.NotNull(requestBody);
+
+        using var body = JsonDocument.Parse(requestBody);
+        Assert.Equal(
+            "Translate from the source language (detect it automatically; typically English) to Chinese (Simplified, China)",
+            body.RootElement.GetProperty("systemInstruction").GetProperty("parts")[0].GetProperty("text").GetString());
+    }
+
+    [Fact]
     public async Task TranslateBatchAsync_ShouldSendSerializedBatchAsUserMessage_AndEmptyContextPlaceholders()
     {
         // Arrange

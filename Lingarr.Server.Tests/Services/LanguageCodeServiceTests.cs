@@ -49,12 +49,38 @@ public class LanguageCodeServiceTests
 
     [Theory]
     [InlineData("invalid")]
+    [InlineData("unknown")]
     [InlineData("")]
     [InlineData(null)]
     public void Validate_WithInvalidCodes_ReturnsFalse(string? code)
     {
         var result = _service.Validate(code);
         Assert.False(result);
+    }
+
+    #endregion
+
+    #region IsUnknown Tests
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("UNKNOWN")]
+    [InlineData("und")]
+    [InlineData("UND")]
+    public void IsUnknown_WithUntaggedOrUndeterminedCodes_ReturnsTrue(string code)
+    {
+        Assert.True(_service.IsUnknown(code));
+    }
+
+    [Theory]
+    [InlineData("en")]
+    [InlineData("zh-CN")]
+    [InlineData("invalid")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsUnknown_WithOtherCodes_ReturnsFalse(string? code)
+    {
+        Assert.False(_service.IsUnknown(code));
     }
 
     #endregion
