@@ -209,8 +209,8 @@ Shared across OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, and LocalAI. Co
 
 | **Setting** | **Environment Variable** | **Default** | **Description** |
 |-------------|--------------------------|-------------|-----------------|
-| `ai_max_tokens` | `AI_MAX_TOKENS` | `8192` | Maximum tokens for one completion (thinking plus the answer). `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI chat receives both `max_tokens` and `max_completion_tokens` (a 400 retries with `max_tokens` only); other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `1024` when the field is omitted, which is too small for a 50-line batch. Not applied to LocalAI generate (Ollama `/api/generate`). |
-| `ai_thinking` | `AI_THINKING` | `off` | Chain-of-thought control for LocalAI OpenAI-compatible chat only. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `auto` sends no `thinking` field (use this for Ollama). `on` writes `thinking.enabled`. If the endpoint returns 400/422 for the `thinking` field, Lingarr retries without it for the rest of that process. |
+| `ai_max_tokens` | `AI_MAX_TOKENS` | `0` | Maximum tokens for one completion (thinking plus the answer). `0` (the default) omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. Not applied to LocalAI generate (Ollama `/api/generate`). |
+| `ai_thinking` | `AI_THINKING` | `auto` | Chain-of-thought control for LocalAI OpenAI-compatible chat only. `auto` (the default) sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
 
 #### **DeepL**
 

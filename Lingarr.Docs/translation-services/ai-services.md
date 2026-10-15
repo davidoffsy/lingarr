@@ -108,8 +108,8 @@ These two settings apply to every AI service and are configured once under **Set
 
 | **Environment Variable** | **Description** |
 |--------------------------|-----------------|
-| `AI_MAX_TOKENS` | Maximum tokens for one completion (thinking plus the answer). Default `8192`. `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI chat receives both `max_tokens` and `max_completion_tokens` (a 400 retries with `max_tokens` only); other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `1024` when the field is omitted, which is too small for a 50-line batch. LocalAI generate (Ollama `/api/generate`) is not injected. |
-| `AI_THINKING` | Chain-of-thought control. Default `off`. Applied only to LocalAI OpenAI-compatible chat. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `auto` sends no `thinking` field — use this for Ollama. `on` writes `thinking.enabled`. If the endpoint returns 400/422 for the `thinking` field, Lingarr retries without it for the rest of that process. |
+| `AI_MAX_TOKENS` | Maximum tokens for one completion (thinking plus the answer). Default `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. LocalAI generate (Ollama `/api/generate`) is not injected. |
+| `AI_THINKING` | Chain-of-thought control. Default `auto`. Applied only to LocalAI OpenAI-compatible chat. `auto` sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
 
 ## Environment variables
 ### OpenAI

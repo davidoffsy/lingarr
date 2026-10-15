@@ -10,9 +10,9 @@ public class AiMaxTokensTests
     [InlineData("8192", 8192)]
     [InlineData(" 8192 ", 8192)]
     [InlineData("0", 0)]
-    [InlineData("", 8192)]
-    [InlineData("   ", 8192)]
-    [InlineData(null, 8192)]
+    [InlineData("", 0)]
+    [InlineData("   ", 0)]
+    [InlineData(null, 0)]
     [InlineData("-1", 0)]
     [InlineData("garbage", 0)]
     [InlineData("1.5", 0)]
@@ -42,18 +42,6 @@ public class AiMaxTokensTests
         using var document = JsonDocument.Parse(applied);
         Assert.Equal(8192, document.RootElement.GetProperty("max_completion_tokens").GetInt32());
         Assert.False(document.RootElement.TryGetProperty("max_tokens", out _));
-    }
-
-    [Fact]
-    public void ApplyOpenAiCompatible_Positive_AddsBothTokenFields()
-    {
-        var templates = new RequestTemplateService();
-
-        var applied = AiMaxTokens.ApplyOpenAiCompatible(templates, """{"model":"test"}""", 8192);
-
-        using var document = JsonDocument.Parse(applied);
-        Assert.Equal(8192, document.RootElement.GetProperty("max_tokens").GetInt32());
-        Assert.Equal(8192, document.RootElement.GetProperty("max_completion_tokens").GetInt32());
     }
 
     [Theory]

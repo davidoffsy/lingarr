@@ -34,6 +34,12 @@ public class MigrationTests
             await using var connection = new SqliteConnection(connectionString);
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT value FROM settings WHERE key = 'ai_thinking'";
+            Assert.Equal("auto", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            command.CommandText = "SELECT value FROM settings WHERE key = 'ai_max_tokens'";
+            Assert.Equal("0", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
         }
         finally
         {

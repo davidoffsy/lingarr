@@ -8,7 +8,7 @@ public class AnthropicTemplate
     public string Model { get; set; } = "{model}";
     
     [JsonPropertyName("max_tokens")] 
-    public int MaxTokens { get; set; } = 1024;
+    public int MaxTokens { get; set; } = 8192;
     
     [JsonPropertyName("system")] 
     public string System { get; set; } = "{systemPrompt}";

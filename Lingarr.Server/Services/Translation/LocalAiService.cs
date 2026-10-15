@@ -272,51 +272,15 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     }
 
     /// <summary>
-    /// Posts an OpenAI-compatible chat body, injecting max tokens and thinking.
-    /// A 400/422 from an extra field (thinking, or max_completion_tokens) is retried
-    /// without that field and the instance remembers the stripped mode for later calls.
+    /// Posts an OpenAI-compatible chat body. Max tokens and thinking are injected
+    /// only when the user set them; nothing is probed or remembered after a 400.
     /// </summary>
     private async Task<HttpResponseMessage> PostChatRequestAsync(string bodyJson, CancellationToken cancellationToken)
     {
-        var withCompatibleTokens = AiMaxTokens.ApplyOpenAiCompatible(_requestTemplateService, bodyJson, _maxTokens);
-        var thinkingMode = _aiThinking;
-        var requestJson = AiThinking.Apply(_requestTemplateService, withCompatibleTokens, thinkingMode);
-        var response = await PostJsonAsync(requestJson, cancellationToken);
-        if (response.IsSuccessStatusCode || !IsCompatRejection(response.StatusCode))
-        {
-            return response;
-        }
-
-        if (thinkingMode != AiThinkingMode.Auto)
-        {
-            _logger.LogWarning(
-                "LocalAI rejected the chat request with {StatusCode} while thinking was {Mode}; retrying without a thinking field.",
-                response.StatusCode,
-                thinkingMode);
-            response.Dispose();
-            _aiThinking = AiThinkingMode.Auto;
-            response = await PostJsonAsync(withCompatibleTokens, cancellationToken);
-            if (response.IsSuccessStatusCode || !IsCompatRejection(response.StatusCode))
-            {
-                return response;
-            }
-        }
-
-        if (_maxTokens > 0)
-        {
-            _logger.LogWarning(
-                "LocalAI rejected the chat request with {StatusCode}; retrying with max_tokens only.",
-                response.StatusCode);
-            response.Dispose();
-            var withChatTokens = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
-            return await PostJsonAsync(withChatTokens, cancellationToken);
-        }
-
-        return response;
+        var withTokens = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
+        var requestJson = AiThinking.Apply(_requestTemplateService, withTokens, _aiThinking);
+        return await PostJsonAsync(requestJson, cancellationToken);
     }
-
-    private static bool IsCompatRejection(HttpStatusCode statusCode) =>
-        statusCode is HttpStatusCode.BadRequest or HttpStatusCode.UnprocessableEntity;
 
     /// <summary>
     /// Translates a batch of subtitles in a single API call using structured outputs fallback

@@ -11,8 +11,9 @@ public enum AiThinkingMode
 
 /// <summary>
 /// Parses the shared <c>ai_thinking</c> setting and maps it to OpenAI-compatible chat
-/// request fields. Unknown values fall back to <see cref="AiThinkingMode.Auto"/> so
-/// providers that reject a <c>thinking</c> key are not sent one.
+/// request fields. Missing, empty, and unknown values fall back to
+/// <see cref="AiThinkingMode.Auto"/> so providers that reject a <c>thinking</c>
+/// key are not sent one.
 /// </summary>
 public static class AiThinking
 {
@@ -24,7 +25,7 @@ public static class AiThinking
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return AiThinkingMode.Off;
+            return AiThinkingMode.Auto;
         }
 
         var trimmed = value.Trim();

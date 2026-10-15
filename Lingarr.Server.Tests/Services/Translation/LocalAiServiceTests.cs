@@ -150,7 +150,7 @@ public class LocalAiServiceTests
     }
 
     [Fact]
-    public async Task TranslateAsync_Chat_MissingThinkingSetting_InjectsDisabled()
+    public async Task TranslateAsync_Chat_MissingThinkingSetting_OmitsThinking()
     {
         UseSettings(ChatEndpoint);
         var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
@@ -158,7 +158,7 @@ public class LocalAiServiceTests
         await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
 
         Assert.Single(bodies);
-        AssertThinkingType(bodies[0], "disabled");
+        AssertNoThinking(bodies[0]);
     }
 
     [Fact]
@@ -211,7 +211,7 @@ public class LocalAiServiceTests
     }
 
     [Fact]
-    public async Task TranslateAsync_Chat_MissingMaxTokensSetting_Injects8192()
+    public async Task TranslateAsync_Chat_MissingMaxTokensSetting_OmitsField()
     {
         UseSettings(ChatEndpoint);
         var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
@@ -219,9 +219,9 @@ public class LocalAiServiceTests
         await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
 
         Assert.Single(bodies);
-        AssertMaxTokens(bodies[0], 8192);
-        AssertMaxCompletionTokens(bodies[0], 8192);
-        AssertThinkingType(bodies[0], "disabled");
+        AssertNoMaxTokens(bodies[0]);
+        AssertNoMaxCompletionTokens(bodies[0]);
+        AssertNoThinking(bodies[0]);
     }
 
     [Fact]
@@ -235,44 +235,21 @@ public class LocalAiServiceTests
         Assert.Single(bodies);
         AssertNoMaxTokens(bodies[0]);
         AssertNoMaxCompletionTokens(bodies[0]);
-        AssertThinkingType(bodies[0], "disabled");
+        AssertNoThinking(bodies[0]);
     }
 
     [Fact]
-    public async Task TranslateAsync_Chat_ThinkingRejected_RetriesWithoutThinking()
-    {
-        UseSettings(ChatEndpoint, aiThinking: "off");
-        var bodies = CaptureRequestBodies(
-            () => JsonError(HttpStatusCode.BadRequest, "unknown field: thinking"),
-            () => ChatResponse("Hola"));
-
-        var translated = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
-
-        Assert.Equal("Hola", translated);
-        Assert.Equal(2, bodies.Count);
-        AssertThinkingType(bodies[0], "disabled");
-        AssertNoThinking(bodies[1]);
-        AssertMaxTokens(bodies[1], 8192);
-        AssertMaxCompletionTokens(bodies[1], 8192);
-    }
-
-    [Fact]
-    public async Task TranslateAsync_Chat_CompletionTokensRejected_RetriesWithMaxTokensOnly()
+    public async Task TranslateAsync_Chat_MaxTokensPositive_AddsMaxTokensOnly()
     {
         UseSettings(ChatEndpoint, aiThinking: "auto", aiMaxTokens: "8192");
-        var bodies = CaptureRequestBodies(
-            () => JsonError(HttpStatusCode.BadRequest, "unknown field: max_completion_tokens"),
-            () => ChatResponse("Hola"));
+        var bodies = CaptureRequestBodies(() => ChatResponse("Hola"));
 
-        var translated = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
 
-        Assert.Equal("Hola", translated);
-        Assert.Equal(2, bodies.Count);
+        Assert.Single(bodies);
         AssertMaxTokens(bodies[0], 8192);
-        AssertMaxCompletionTokens(bodies[0], 8192);
-        AssertMaxTokens(bodies[1], 8192);
-        AssertNoMaxCompletionTokens(bodies[1]);
-        AssertNoThinking(bodies[1]);
+        AssertNoMaxCompletionTokens(bodies[0]);
+        AssertNoThinking(bodies[0]);
     }
 
     [Fact]
@@ -607,16 +584,6 @@ public class LocalAiServiceTests
             });
         return captured;
     }
-
-    private static HttpResponseMessage JsonError(HttpStatusCode statusCode, string message) =>
-        new()
-        {
-            StatusCode = statusCode,
-            Content = new StringContent(
-                JsonSerializer.Serialize(new { error = new { message } }),
-                Encoding.UTF8,
-                "application/json")
-        };
 
     private static void AssertThinkingType(string json, string expectedType)
     {

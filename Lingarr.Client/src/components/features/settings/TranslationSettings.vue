@@ -34,10 +34,10 @@
             <template v-if="isAiService">
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Max tokens</span>
-                    Maximum tokens for one completion (thinking plus the answer). Default 8192 is
-                    enough for 50–100 subtitle lines with thinking off. Use 0 to omit the field and
-                    keep the provider default. Anthropic's request template defaults to 1024 when
-                    the field is omitted, which is too small for a 50-line batch.
+                    Maximum tokens for one completion (thinking plus the answer). Default 0 omits
+                    the field so each provider keeps its own default. Set a positive value to cap
+                    the response. Anthropic's request template defaults to 8192 when the field is
+                    omitted.
                 </div>
                 <InputComponent
                     v-model="aiMaxTokens"
@@ -48,11 +48,10 @@
             <template v-if="isLocalAiService">
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Thinking</span>
-                    Controls whether the model spends tokens on chain-of-thought. Off writes
-                    thinking.disabled (needed for OpenCode Go / MiMo). Auto sends no thinking field
-                    — use this for Ollama. On writes thinking.enabled. Only applied to LocalAI
-                    OpenAI-compatible chat. If the endpoint rejects the thinking field, Lingarr
-                    retries without it.
+                    Controls whether the model spends tokens on chain-of-thought. Auto (default)
+                    sends no thinking field — the compatible choice for Ollama and most OpenCode
+                    Go models. Off writes thinking.disabled (needed for OpenCode Go / MiMo). On
+                    writes thinking.enabled. Only applied to LocalAI OpenAI-compatible chat.
                 </div>
                 <SelectComponent
                     :selected="aiThinking"
