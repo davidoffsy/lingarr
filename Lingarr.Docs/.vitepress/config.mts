@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
+    // GitHub Pages serves this fork at /lingarr-support-mkv/; keep `/` for local preview.
+    base: process.env.GITHUB_ACTIONS === 'true' ? '/lingarr-support-mkv/' : '/',
     vite: {
         server: {
             watch: {
