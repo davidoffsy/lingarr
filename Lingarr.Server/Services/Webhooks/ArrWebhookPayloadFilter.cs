@@ -18,6 +18,12 @@ public static class ArrWebhookPayloadFilter
             return true;
         }
 
+        if (!IsDownload(payload.EventType))
+        {
+            reason = "not a download event";
+            return true;
+        }
+
         if (payload.Movie == null || payload.Movie.Id <= 0)
         {
             reason = "missing movie data";
@@ -42,6 +48,12 @@ public static class ArrWebhookPayloadFilter
             return true;
         }
 
+        if (!IsDownload(payload.EventType))
+        {
+            reason = "not a download event";
+            return true;
+        }
+
         if (payload.Series == null || payload.Series.Id <= 0 || payload.Episodes == null || payload.Episodes.Count == 0)
         {
             reason = "missing series or episode data";
@@ -54,4 +66,7 @@ public static class ArrWebhookPayloadFilter
 
     private static bool IsTest(string? eventType) =>
         string.Equals(eventType, "Test", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDownload(string? eventType) =>
+        string.Equals(eventType, "Download", StringComparison.OrdinalIgnoreCase);
 }

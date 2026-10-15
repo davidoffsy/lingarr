@@ -1,4 +1,4 @@
-﻿<template>
+<template>
     <CardComponent title="Integrations">
         <template #description>Configure the settings for Radarr and Sonarr integrations.</template>
         <template #content>
@@ -27,6 +27,17 @@
                         </span>
                     </ToggleButton>
                 </div>
+            </div>
+            <div class="flex flex-col space-y-2">
+                <span class="font-semibold">Radarr / Sonarr webhook:</span>
+                <ToggleButton v-model="arrWebhookAutoTranslate">
+                    <span class="text-sm font-medium text-primary-content">
+                        Automatically translate subtitles on new media imports
+                    </span>
+                </ToggleButton>
+                <p class="text-sm text-secondary-content/80">
+                    When off, download webhooks only sync new media. Scheduled translation tasks are unaffected.
+                </p>
             </div>
             <div class="flex flex-col space-y-2">
                 <span class="font-semibold">Sonarr Settings:</span>
@@ -126,6 +137,13 @@ const sonarrDefaultInclude = computed({
     get: (): string => (settingsStore.getSetting(SETTINGS.SONARR_DEFAULT_INCLUDE) as string),
     set: (newValue: string): void => {
         settingsStore.updateSetting(SETTINGS.SONARR_DEFAULT_INCLUDE, newValue, true)
+        saveNotification.value?.show()
+    }
+})
+const arrWebhookAutoTranslate = computed({
+    get: (): string => (settingsStore.getSetting(SETTINGS.ARR_WEBHOOK_AUTO_TRANSLATE) as string) ?? 'true',
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.ARR_WEBHOOK_AUTO_TRANSLATE, newValue, true)
         saveNotification.value?.show()
     }
 })

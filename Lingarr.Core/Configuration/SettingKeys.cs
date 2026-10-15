@@ -11,6 +11,7 @@ public static class SettingKeys
         public const string SonarrApiKey = "sonarr_api_key";
         public const string SonarrDefaultInclude = "sonarr_default_include";
         public const string ArrWebhookSecret = "arr_webhook_secret";
+        public const string ArrWebhookAutoTranslate = "arr_webhook_auto_translate";
         public const string RadarrSettingsCompleted = "radarr_settings_completed";
         public const string SonarrSettingsCompleted = "sonarr_settings_completed";
         public const string PlexUrl = "plex_url";

@@ -43,6 +43,22 @@ public class ArrWebhookPayloadFilterTests
         Assert.False(ArrWebhookPayloadFilter.ShouldIgnoreRadarr(payload, out _));
     }
 
+    [Theory]
+    [InlineData("Rename")]
+    [InlineData("Grab")]
+    [InlineData(null)]
+    public void ShouldIgnoreRadarr_NonDownload_IsTrue(string? eventType)
+    {
+        var payload = new RadarrWebhookPayload
+        {
+            EventType = eventType,
+            Movie = new RadarrWebhookMovie { Id = 12 }
+        };
+
+        Assert.True(ArrWebhookPayloadFilter.ShouldIgnoreRadarr(payload, out var reason));
+        Assert.Equal("not a download event", reason);
+    }
+
     [Fact]
     public void ShouldIgnoreSonarr_TestEvent_IsTrue()
     {
@@ -77,5 +93,22 @@ public class ArrWebhookPayloadFilterTests
         };
 
         Assert.False(ArrWebhookPayloadFilter.ShouldIgnoreSonarr(payload, out _));
+    }
+
+    [Theory]
+    [InlineData("Rename")]
+    [InlineData("Grab")]
+    [InlineData(null)]
+    public void ShouldIgnoreSonarr_NonDownload_IsTrue(string? eventType)
+    {
+        var payload = new SonarrWebhookPayload
+        {
+            EventType = eventType,
+            Series = new SonarrWebhookSeries { Id = 1 },
+            Episodes = [new SonarrWebhookEpisode { Id = 99 }]
+        };
+
+        Assert.True(ArrWebhookPayloadFilter.ShouldIgnoreSonarr(payload, out var reason));
+        Assert.Equal("not a download event", reason);
     }
 }

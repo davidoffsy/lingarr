@@ -1,8 +1,8 @@
 <template>
     <CardComponent title="Webhook">
         <template #description>
-            Configure webhooks in Radarr and Sonarr to automatically trigger translations when new
-            media is added. The URL includes a Lingarr-generated secret — do not use Lingarr's API
+            Configure download webhooks in Radarr and Sonarr to sync new media. Enable automatic
+            translation in Integration settings to translate its subtitles immediately. The URL includes a Lingarr-generated secret — do not use Lingarr's API
             key or the Radarr/Sonarr API keys. Radarr and Sonarr share one secret; regenerating it
             invalidates both URLs.
         </template>
