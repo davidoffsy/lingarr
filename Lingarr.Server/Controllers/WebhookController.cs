@@ -8,7 +8,9 @@ using Lingarr.Server.Interfaces.Services.Plex;
 using Lingarr.Server.Jobs;
 using Lingarr.Server.Models.Plex;
 using Lingarr.Server.Models.Webhooks;
+using Lingarr.Server.Services;
 using Lingarr.Server.Services.Plex;
+using Lingarr.Server.Services.Webhooks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -23,6 +25,7 @@ public class WebhookController : ControllerBase
     private readonly ISettingService _settingService;
     private readonly IPlexWebhookParser _plexWebhookParser;
     private readonly IPlexWebhookInbox _plexWebhookInbox;
+    private readonly IArrWebhookSecretService _arrWebhookSecretService;
     private readonly ILogger<WebhookController> _logger;
 
     public WebhookController(
@@ -30,51 +33,105 @@ public class WebhookController : ControllerBase
         ISettingService settingService,
         IPlexWebhookParser plexWebhookParser,
         IPlexWebhookInbox plexWebhookInbox,
+        IArrWebhookSecretService arrWebhookSecretService,
         ILogger<WebhookController> logger)
     {
         _backgroundJobClient = backgroundJobClient;
         _settingService = settingService;
         _plexWebhookParser = plexWebhookParser;
         _plexWebhookInbox = plexWebhookInbox;
+        _arrWebhookSecretService = arrWebhookSecretService;
         _logger = logger;
     }
 
     /// <summary>
-    /// Receives webhook events from Radarr
+    /// Returns the Radarr/Sonarr webhook secret. Empty until one is generated.
     /// </summary>
-    /// <param name="payload">The webhook payload from Radarr</param>
-    /// <returns>Returns 200 OK if webhook was queued, 400 if invalid payload</returns>
-    [HttpPost("radarr")]
-    public async Task<IActionResult> RadarrWebhook([FromBody] RadarrWebhookPayload payload)
+    [HttpGet("arr-secret")]
+    public async Task<ActionResult<ArrWebhookSecretResponse>> GetArrSecret(CancellationToken cancellationToken)
     {
-        if (payload.Movie == null || payload.Movie.Id <= 0)
+        var secret = await _arrWebhookSecretService.GetSecretAsync(cancellationToken);
+        return Ok(new ArrWebhookSecretResponse { Secret = secret });
+    }
+
+    /// <summary>
+    /// Generates or regenerates the Radarr/Sonarr webhook secret. Existing Arr connections must be updated.
+    /// </summary>
+    [HttpPost("arr-secret")]
+    public async Task<ActionResult<ArrWebhookSecretResponse>> RegenerateArrSecret(CancellationToken cancellationToken)
+    {
+        var secret = await _arrWebhookSecretService.RegenerateSecretAsync(cancellationToken);
+        return Ok(new ArrWebhookSecretResponse { Secret = secret });
+    }
+
+    /// <summary>
+    /// Receives webhook events from Radarr.
+    /// Authenticated with the Lingarr-generated webhook secret query parameter, not the main API key.
+    /// </summary>
+    [HttpPost("radarr")]
+    [AllowAnonymous]
+    [RequestSizeLimit(ArrWebhookJsonReader.MaxRequestBytes)]
+    public async Task<IActionResult> RadarrWebhook(
+        [FromQuery] string? token,
+        CancellationToken cancellationToken = default)
+    {
+        var rejected = await RejectIfUnauthorized(token, cancellationToken);
+        if (rejected != null)
         {
-            _logger.LogWarning("Invalid Radarr webhook payload: missing or invalid movie data");
-            return BadRequest(new { message = "Invalid webhook payload: missing movie data" });
+            return rejected;
         }
 
-        _backgroundJobClient.Enqueue<WebhookJob>(job => job.ProcessRadarrWebhook(payload));
-        _logger.LogInformation("Queued Radarr webhook processing job for movie ID {MovieId}", payload.Movie.Id);
+        var body = await ArrWebhookJsonReader.ReadAsync<RadarrWebhookPayload>(Request.Body, cancellationToken);
+        var invalid = RejectInvalidBody(body);
+        if (invalid != null)
+        {
+            return invalid;
+        }
+
+        if (ArrWebhookPayloadFilter.ShouldIgnoreRadarr(body.Payload, out var reason))
+        {
+            _logger.LogInformation("Radarr webhook ignored: {Reason}", reason);
+            return Ok(new { message = "Webhook ignored", reason });
+        }
+
+        _backgroundJobClient.Enqueue<WebhookJob>(job => job.ProcessRadarrWebhook(body.Payload!));
+        _logger.LogInformation("Queued Radarr webhook processing job for movie ID {MovieId}", body.Payload!.Movie!.Id);
         return Ok(new { message = "Webhook received and queued for processing" });
     }
 
     /// <summary>
-    /// Receives webhook events from Sonarr
+    /// Receives webhook events from Sonarr.
+    /// Authenticated with the Lingarr-generated webhook secret query parameter, not the main API key.
     /// </summary>
-    /// <param name="payload">The webhook payload from Sonarr</param>
-    /// <returns>Returns 200 OK if webhook was queued, 400 if invalid payload</returns>
     [HttpPost("sonarr")]
-    public async Task<IActionResult> SonarrWebhook([FromBody] SonarrWebhookPayload payload)
+    [AllowAnonymous]
+    [RequestSizeLimit(ArrWebhookJsonReader.MaxRequestBytes)]
+    public async Task<IActionResult> SonarrWebhook(
+        [FromQuery] string? token,
+        CancellationToken cancellationToken = default)
     {
-        if (payload.Series == null || payload.Series.Id <= 0 || payload.Episodes == null || !payload.Episodes.Any())
+        var rejected = await RejectIfUnauthorized(token, cancellationToken);
+        if (rejected != null)
         {
-            _logger.LogWarning("Invalid Sonarr webhook payload: missing series or episode data");
-            return BadRequest(new { message = "Invalid webhook payload: missing series or episode data" });
+            return rejected;
         }
 
-        _backgroundJobClient.Enqueue<WebhookJob>(job => job.ProcessSonarrWebhook(payload));
+        var body = await ArrWebhookJsonReader.ReadAsync<SonarrWebhookPayload>(Request.Body, cancellationToken);
+        var invalid = RejectInvalidBody(body);
+        if (invalid != null)
+        {
+            return invalid;
+        }
+
+        if (ArrWebhookPayloadFilter.ShouldIgnoreSonarr(body.Payload, out var reason))
+        {
+            _logger.LogInformation("Sonarr webhook ignored: {Reason}", reason);
+            return Ok(new { message = "Webhook ignored", reason });
+        }
+
+        _backgroundJobClient.Enqueue<WebhookJob>(job => job.ProcessSonarrWebhook(body.Payload!));
         _logger.LogInformation("Queued Sonarr webhook processing job for series ID {SeriesId}, episodes: {EpisodeIds}",
-            payload.Series.Id, string.Join(", ", payload.Episodes.Select(e => e.Id)));
+            body.Payload!.Series!.Id, string.Join(", ", body.Payload.Episodes!.Select(e => e.Id)));
         return Ok(new { message = "Webhook received and queued for processing" });
     }
 
@@ -163,6 +220,42 @@ public class WebhookController : ControllerBase
         _logger.LogInformation("Queued Plex webhook processing job");
         Remember("queued", StatusCodes.Status200OK, null, payload);
         return Ok(new { message = "Webhook received and queued for processing" });
+    }
+
+    private async Task<IActionResult?> RejectIfUnauthorized(string? token, CancellationToken cancellationToken)
+    {
+        var auth = await _arrWebhookSecretService.AuthenticateAsync(token, cancellationToken);
+        if (auth.IsAllowed)
+        {
+            return null;
+        }
+
+        if (auth.OnboardingRequired)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                message = auth.Message,
+                onboardingRequired = true
+            });
+        }
+
+        _logger.LogWarning("Arr webhook rejected: {Reason}", auth.Message);
+        return Unauthorized(new { message = auth.Message });
+    }
+
+    private IActionResult? RejectInvalidBody<T>(ArrWebhookJsonRead<T> body) where T : class
+    {
+        if (body.IsTooLarge)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { message = "Webhook payload too large" });
+        }
+
+        if (body.IsInvalidJson)
+        {
+            return BadRequest(new { message = "Invalid webhook payload" });
+        }
+
+        return null;
     }
 
     private void Remember(string outcome, int status, string? reason, PlexWebhookPayload? payload = null)

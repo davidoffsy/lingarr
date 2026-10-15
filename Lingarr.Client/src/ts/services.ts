@@ -32,6 +32,7 @@ import {
     IPlexWebhookSecretResponse,
     IPlexWebhookStatus
 } from '@/ts/plex'
+import { IArrWebhookSecretResponse } from '@/ts/webhook'
 
 export interface Services {
     auth: IAuthService
@@ -50,6 +51,7 @@ export interface Services {
     requestTemplate: IRequestTemplateService
     plugin: IPluginService
     plex: IPlexService
+    webhook: IWebhookService
 }
 
 export interface IPluginService {
@@ -196,4 +198,9 @@ export interface IPlexService {
     getWebhookSecret(): Promise<IPlexWebhookSecretResponse>
     regenerateWebhookSecret(): Promise<IPlexWebhookSecretResponse>
     getWebhookStatus(): Promise<IPlexWebhookStatus | null>
+}
+
+export interface IWebhookService {
+    getArrSecret(): Promise<IArrWebhookSecretResponse>
+    regenerateArrSecret(): Promise<IArrWebhookSecretResponse>
 }

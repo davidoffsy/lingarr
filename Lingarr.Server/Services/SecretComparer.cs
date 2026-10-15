@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Lingarr.Server.Services.Plex;
+namespace Lingarr.Server.Services;
 
 public static class SecretComparer
 {

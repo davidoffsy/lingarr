@@ -54,6 +54,8 @@ secrets:
 | `SONARR_URL`             | The base URL for the Sonarr API. Example: `http://localhost:8989`.              |
 | `SONARR_API_KEY`         | The API key for authenticating with Sonarr. Obtain this from your Sonarr instance. |
 
+Webhook URLs are shown at **Settings → Integrations**. Generate a secret there, then copy the full URL, including the Lingarr-generated `token=` query. Do **not** put Lingarr's `api_key` or the Radarr/Sonarr API keys into the webhook URL. Existing connections without a token keep working until you generate a secret.
+
 ---
 
 ### **Plex Configuration**

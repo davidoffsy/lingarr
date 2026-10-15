@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using Lingarr.Core.Configuration;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Plex;
@@ -161,8 +160,14 @@ public class PlexAuthService : IPlexAuthService
 
     private async Task<string> PersistWebhookSecretAsync()
     {
-        var secret = GenerateSecret();
-        await _settingService.SetEncryptedSetting(SettingKeys.Integration.PlexWebhookSecret, secret);
+        var secret = WebhookSecretGenerator.Generate();
+        var saved = await _settingService.SetEncryptedSetting(SettingKeys.Integration.PlexWebhookSecret, secret);
+        if (!saved)
+        {
+            throw new InvalidOperationException(
+                "Failed to persist plex_webhook_secret. Was the database migrated?");
+        }
+
         return secret;
     }
 
@@ -251,12 +256,5 @@ public class PlexAuthService : IPlexAuthService
             PreferredUri = preferred?.Uri,
             Connections = connections
         };
-    }
-
-    private static string GenerateSecret()
-    {
-        var bytes = new byte[32];
-        RandomNumberGenerator.Fill(bytes);
-        return Convert.ToBase64String(bytes).Replace("/", "_").Replace("+", "-")[..43];
     }
 }

@@ -4,6 +4,9 @@ namespace Lingarr.Server.Models.Webhooks;
 
 public class SonarrWebhookPayload
 {
+    [JsonPropertyName("eventType")]
+    public string? EventType { get; set; }
+
     [JsonPropertyName("series")]
     public SonarrWebhookSeries? Series { get; set; }
 

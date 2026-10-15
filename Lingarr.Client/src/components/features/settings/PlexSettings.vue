@@ -82,8 +82,12 @@
                         <ButtonComponent variant="ghost" :loading="regenerating" @click="regenerateSecret">
                             Regenerate secret
                         </ButtonComponent>
+                        <ButtonComponent variant="ghost" :loading="checkingWebhook" @click="loadWebhookStatus">
+                            Check last webhook
+                        </ButtonComponent>
                     </div>
                     <StatusMessage
+                        v-if="webhookChecked"
                         :message="webhookStatusMessage"
                         :type="webhookStatusType"
                         show-icon />
@@ -145,7 +149,6 @@ import StatusMessage from '@/components/common/StatusMessage.vue'
 
 const POLL_INTERVAL_MS = 1500
 const POLL_TIMEOUT_MS = 15 * 60 * 1000
-const WEBHOOK_STATUS_POLL_MS = 5000
 
 const settingsStore = useSettingStore()
 const saveNotification = ref<InstanceType<typeof SaveNotification> | null>(null)
@@ -153,6 +156,9 @@ const signingIn = ref(false)
 const disconnecting = ref(false)
 const testing = ref(false)
 const regenerating = ref(false)
+const checkingWebhook = ref(false)
+const webhookChecked = ref(false)
+const webhookStatus = ref<IPlexWebhookStatus | null>(null)
 const copied = ref(false)
 const signInError = ref('')
 const pendingAuthUrl = ref('')
@@ -161,10 +167,8 @@ const testSuccess = ref(false)
 const isUrlValid = ref(false)
 const isMinRatingValid = ref(true)
 const servers = ref<IPlexServer[]>([])
-const webhookStatus = ref<IPlexWebhookStatus | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollTimeout: ReturnType<typeof setTimeout> | null = null
-let webhookStatusTimer: ReturnType<typeof setInterval> | null = null
 let authPopup: Window | null = null
 
 const raterOptions: ISelectOption[] = [
@@ -243,7 +247,7 @@ const webhookStatusType = computed(() => {
 const webhookStatusMessage = computed(() => {
     const status = webhookStatus.value
     if (!status) {
-        return 'No webhook received yet. Opening this URL or curling GET / only proves the page loads — Plex Media Server must POST multipart/form-data. After a saved 5-star rating, this line updates within a few seconds. If it stays empty, PMS is not sending (Plex Pass, webhook URL, or nginx rejecting the POST body).'
+        return 'No webhook received yet. Opening this URL or curling GET / only proves the page loads — Plex Media Server must POST multipart/form-data. After a saved 5-star rating, check again. If it stays empty, PMS is not sending (Plex Pass, webhook URL, or nginx rejecting the POST body).'
     }
 
     const when = new Date(status.receivedAt).toLocaleString()
@@ -405,7 +409,23 @@ const copyWebhookUrl = async () => {
     }, 2000)
 }
 
+const loadWebhookStatus = async () => {
+    checkingWebhook.value = true
+    try {
+        webhookStatus.value = await services.plex.getWebhookStatus()
+    } catch {
+        webhookStatus.value = null
+    } finally {
+        webhookChecked.value = true
+        checkingWebhook.value = false
+    }
+}
+
 const regenerateSecret = async () => {
+    if (!window.confirm('Regenerating this secret invalidates the Plex webhook URL. Continue?')) {
+        return
+    }
+
     regenerating.value = true
     try {
         const response = await services.plex.regenerateWebhookSecret()
@@ -416,28 +436,12 @@ const regenerateSecret = async () => {
     }
 }
 
-const loadWebhookStatus = async () => {
-    try {
-        webhookStatus.value = await services.plex.getWebhookStatus()
-    } catch {
-        // Status is diagnostic only; keep the last known value.
-    }
-}
-
 onMounted(async () => {
     await ensureWebhookSecret()
     await loadServers()
-    await loadWebhookStatus()
-    webhookStatusTimer = setInterval(() => {
-        void loadWebhookStatus()
-    }, WEBHOOK_STATUS_POLL_MS)
 })
 
 onUnmounted(() => {
     stopPolling()
-    if (webhookStatusTimer) {
-        clearInterval(webhookStatusTimer)
-        webhookStatusTimer = null
-    }
 })
 </script>

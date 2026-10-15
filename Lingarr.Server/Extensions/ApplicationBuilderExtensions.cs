@@ -86,6 +86,7 @@ public static class ApplicationBuilderExtensions
             SettingKeys.Translation.LocalAi.ApiKey,
             SettingKeys.Integration.PlexToken,
             SettingKeys.Integration.PlexWebhookSecret,
+            SettingKeys.Integration.ArrWebhookSecret,
         ];
 
         using var scope = app.Services.CreateScope();

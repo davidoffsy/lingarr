@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Lingarr.Core.Configuration;
@@ -130,5 +131,14 @@ public class PlexAuthServiceTests
         _settings.Verify(
             s => s.SetSetting(SettingKeys.Integration.PlexClientIdentifier, It.IsAny<string>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task RegenerateWebhookSecret_WhenPersistFails_Throws()
+    {
+        _settings.Setup(s => s.SetEncryptedSetting(SettingKeys.Integration.PlexWebhookSecret, It.IsAny<string>()))
+            .ReturnsAsync(false);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _service.RegenerateWebhookSecretAsync());
     }
 }

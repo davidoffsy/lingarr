@@ -7,7 +7,7 @@ using Hangfire.States;
 using Lingarr.Core.Configuration;
 using Lingarr.Server.Controllers;
 using Lingarr.Server.Interfaces.Services;
-using Lingarr.Server.Jobs;
+using Lingarr.Server.Interfaces.Services.Plex;
 using Lingarr.Server.Services.Plex;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -137,7 +137,8 @@ public class WebhookControllerPlexTests
             _jobs.Object,
             _settings.Object,
             _parser,
-            new PlexWebhookInbox(),
+            Mock.Of<IPlexWebhookInbox>(),
+            Mock.Of<IArrWebhookSecretService>(),
             NullLogger<WebhookController>.Instance);
 
         var context = new DefaultHttpContext();

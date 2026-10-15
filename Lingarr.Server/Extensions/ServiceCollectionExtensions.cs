@@ -30,6 +30,7 @@ using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Sync;
 using Lingarr.Server.Services.Plex;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Webhooks;
 using Lingarr.Migrations;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
@@ -185,6 +186,7 @@ public static class ServiceCollectionExtensions
         builder.Services.AddScoped<IPlexSubtitleImporter, PlexSubtitleImporter>();
         builder.Services.AddSingleton<IPlexWebhookParser, PlexWebhookParser>();
         builder.Services.AddSingleton<IPlexWebhookInbox, PlexWebhookInbox>();
+        builder.Services.AddScoped<IArrWebhookSecretService, ArrWebhookSecretService>();
         builder.Services.AddScoped<ISubtitleService, SubtitleService>();
         builder.Services.AddScoped<ITranslationRequestService, TranslationRequestService>();
         builder.Services.AddScoped<ITranslationRequestEventService, TranslationRequestEventService>();
