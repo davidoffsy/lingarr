@@ -12,6 +12,8 @@ public static class OpenAiCompatibleEndpoint
     [
         "/v1/chat/completions",
         "/chat/completions",
+        "/v1/responses",
+        "/responses",
         "/v1/completions",
         "/completions",
         "/api/generate",
@@ -47,6 +49,16 @@ public static class OpenAiCompatibleEndpoint
         return root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
             ? root + "/chat/completions"
             : root + "/v1/chat/completions";
+    }
+
+    public static string ResolveResponsesUrl(string endpoint)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
+
+        var root = StripKnownApiPaths(endpoint);
+        return root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
+            ? root + "/responses"
+            : root + "/v1/responses";
     }
 
     public static string ResolveModelsUrl(string endpoint)

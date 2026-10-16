@@ -270,7 +270,9 @@ public class StartupService : IHostedService
             { "CUSTOM_ENDPOINT", SettingKeys.Translation.Custom.Endpoint },
             { "CUSTOM_MODEL", SettingKeys.Translation.Custom.Model },
             { "CUSTOM_API_KEY", SettingKeys.Translation.Custom.ApiKey },
+            { "CUSTOM_PROTOCOL", SettingKeys.Translation.Custom.Protocol },
             { "CUSTOM_CHAT_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.ChatRequestTemplate },
+            { "CUSTOM_RESPONSES_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.ResponsesRequestTemplate },
 
             { "GEMINI_MODEL", SettingKeys.Translation.Gemini.Model },
             { "GEMINI_API_KEY", SettingKeys.Translation.Gemini.ApiKey },

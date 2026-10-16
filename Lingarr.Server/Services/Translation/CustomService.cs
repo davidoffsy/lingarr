@@ -12,20 +12,24 @@ using Lingarr.Server.Services.Translation.OpenAiCompatible;
 namespace Lingarr.Server.Services.Translation;
 
 /// <summary>
-/// Independent custom provider: a user-supplied OpenAI-compatible endpoint spoken over
-/// the non-streaming Chat Completions protocol. Keeps its own <c>custom_*</c> settings
-/// (endpoint, encrypted key, model, request template) so it can be configured next to
-/// LocalAI without sharing identity, address or credentials.
+/// Independent custom provider: a user-supplied gateway spoken over a non-streaming protocol
+/// chosen in <c>custom_protocol</c> (OpenAI Chat Completions or OpenAI Responses). Keeps its own
+/// <c>custom_*</c> settings (endpoint, encrypted key, model, protocol, per-protocol request
+/// template) so it can be configured next to LocalAI without sharing identity, address or
+/// credentials.
 /// </summary>
 public class CustomService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService, IModelOverridable
 {
     private readonly HttpClient _httpClient;
     private readonly IRequestTemplateService _requestTemplateService;
     private readonly OpenAiChatCompletionsClient _chatClient;
+    private readonly OpenAiResponsesClient _responsesClient;
+    private IOpenAiCompatibleCompletionClient _completionClient;
+    private CustomProtocol _protocol;
     private string? _model;
     private string? _endpoint;
     private string? _apiKey;
-    private string? _chatRequestTemplate;
+    private string? _requestTemplate;
     private AiThinkingMode _aiThinking;
     private int _maxTokens;
     private bool _initialized;
@@ -58,6 +62,14 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             requestTemplateService,
             logger,
             "Custom");
+        _responsesClient = new OpenAiResponsesClient(
+            httpClient,
+            requestTemplateService,
+            logger,
+            "Custom");
+        // Replaced by the configured protocol in InitializeAsync; Chat Completions stays the
+        // historical default so records written before the protocol setting existed keep working.
+        _completionClient = _chatClient;
     }
 
     /// <summary>
@@ -75,7 +87,9 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             var settings = await _settings.GetSettings([
                 SettingKeys.Translation.Custom.Model,
                 SettingKeys.Translation.Custom.Endpoint,
+                SettingKeys.Translation.Custom.Protocol,
                 SettingKeys.Translation.Custom.ChatRequestTemplate,
+                SettingKeys.Translation.Custom.ResponsesRequestTemplate,
                 SettingKeys.Translation.AiPrompt,
                 SettingKeys.Translation.AiUserPrompt,
                 SettingKeys.Translation.AiMaxTokens,
@@ -89,12 +103,27 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
                 SettingKeys.Translation.LanguageCodeFormat
             ]);
 
+            var protocolSetting = settings.GetValueOrDefault(SettingKeys.Translation.Custom.Protocol);
+            if (!CustomProtocols.TryParse(protocolSetting, out _protocol))
+            {
+                // An unknown protocol is a configuration error, not something to guess: the request
+                // shape of the wrong protocol would fail on every line of the provider.
+                throw new TranslationConfigurationException(
+                    $"Custom protocol '{protocolSetting}' is not supported. Set {SettingKeys.Translation.Custom.Protocol} to {CustomProtocols.SupportedValues}.");
+            }
+
+            _completionClient = _protocol == CustomProtocol.OpenAiResponses ? _responsesClient : _chatClient;
+
+            // Each protocol reads its own template key, so editing one never changes the other.
+            var templateKey = _protocol == CustomProtocol.OpenAiResponses
+                ? SettingKeys.Translation.Custom.ResponsesRequestTemplate
+                : SettingKeys.Translation.Custom.ChatRequestTemplate;
+
             _model = ResolveModel(settings.GetValueOrDefault(SettingKeys.Translation.Custom.Model));
             var configuredEndpoint = settings.GetValueOrDefault(SettingKeys.Translation.Custom.Endpoint);
-            _chatRequestTemplate = !string.IsNullOrEmpty(
-                settings.GetValueOrDefault(SettingKeys.Translation.Custom.ChatRequestTemplate))
-                ? settings[SettingKeys.Translation.Custom.ChatRequestTemplate]
-                : _requestTemplateService.GetDefaultTemplate(SettingKeys.Translation.Custom.ChatRequestTemplate);
+            _requestTemplate = !string.IsNullOrEmpty(settings.GetValueOrDefault(templateKey))
+                ? settings[templateKey]
+                : _requestTemplateService.GetDefaultTemplate(templateKey);
 
             if (string.IsNullOrEmpty(_model) || string.IsNullOrWhiteSpace(configuredEndpoint))
             {
@@ -104,10 +133,13 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
                     "Custom service requires both endpoint address and model name to be configured in settings.");
             }
 
-            // This provider speaks OpenAI Chat only, so the URL is resolved without protocol guessing.
+            // The protocol is configured explicitly, so only that protocol's path is built; known
+            // paths of the other protocol are still recognised as API paths and replaced.
             try
             {
-                _endpoint = OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(configuredEndpoint);
+                _endpoint = _protocol == CustomProtocol.OpenAiResponses
+                    ? OpenAiCompatibleEndpoint.ResolveResponsesUrl(configuredEndpoint)
+                    : OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(configuredEndpoint);
             }
             catch (Exception ex) when (ex is UriFormatException or ArgumentException)
             {
@@ -136,7 +168,7 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             if (string.IsNullOrEmpty(_apiKey))
             {
                 _logger.LogWarning(
-                    "Custom API key is not configured. Authenticated OpenAI-compatible gateways will reject chat completions.");
+                    "Custom API key is not configured. Authenticated OpenAI-compatible gateways will reject the request.");
             }
 
             _maxRetries = int.TryParse(settings.GetValueOrDefault(SettingKeys.Translation.MaxRetries),
@@ -181,10 +213,10 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             try
             {
                 using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await _chatClient.CompleteAsync(
+                return await _completionClient.CompleteAsync(
                     _endpoint!,
                     _apiKey,
-                    _chatRequestTemplate!,
+                    _requestTemplate!,
                     replacements,
                     _aiThinking,
                     _maxTokens,
@@ -241,10 +273,10 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             try
             {
                 using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await _chatClient.CompleteAsync(
+                return await _completionClient.CompleteAsync(
                     _endpoint!,
                     _apiKey,
-                    _chatRequestTemplate!,
+                    _requestTemplate!,
                     replacements,
                     _aiThinking,
                     _maxTokens,
@@ -355,10 +387,10 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
         CancellationToken cancellationToken)
     {
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
-        return await _chatClient.CompleteBatchAsync(
+        return await _completionClient.CompleteBatchAsync(
             _endpoint!,
             _apiKey,
-            _chatRequestTemplate!,
+            _requestTemplate!,
             replacements,
             _aiThinking,
             _maxTokens,

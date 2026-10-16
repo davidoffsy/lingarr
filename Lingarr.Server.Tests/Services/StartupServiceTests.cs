@@ -47,7 +47,9 @@ public class StartupServiceTests : IDisposable
         ("CUSTOM_ENDPOINT", SettingKeys.Translation.Custom.Endpoint),
         ("CUSTOM_MODEL", SettingKeys.Translation.Custom.Model),
         ("CUSTOM_API_KEY", SettingKeys.Translation.Custom.ApiKey),
+        ("CUSTOM_PROTOCOL", SettingKeys.Translation.Custom.Protocol),
         ("CUSTOM_CHAT_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.ChatRequestTemplate),
+        ("CUSTOM_RESPONSES_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.ResponsesRequestTemplate),
         ("GEMINI_MODEL", SettingKeys.Translation.Gemini.Model),
         ("GEMINI_API_KEY", SettingKeys.Translation.Gemini.ApiKey),
         ("DEEPSEEK_MODEL", SettingKeys.Translation.DeepSeek.Model),
@@ -69,6 +71,9 @@ public class StartupServiceTests : IDisposable
     /// </summary>
     private const string CustomRequestTemplate =
         "{\"model\":\"{model}\",\"messages\":[{\"role\":\"user\",\"content\":\"{lineToTranslate}\"}]}";
+
+    private const string CustomResponsesRequestTemplate =
+        "{\"model\":\"{model}\",\"input\":[{\"role\":\"user\",\"content\":\"{lineToTranslate}\"}]}";
 
     private readonly string _tempDir;
 
@@ -343,7 +348,9 @@ public class StartupServiceTests : IDisposable
         Environment.SetEnvironmentVariable("CUSTOM_ENDPOINT", "http://gateway:8000/v1");
         Environment.SetEnvironmentVariable("CUSTOM_MODEL", "model-a");
         Environment.SetEnvironmentVariable("CUSTOM_API_KEY", "custom-key");
+        Environment.SetEnvironmentVariable("CUSTOM_PROTOCOL", "openai_responses");
         Environment.SetEnvironmentVariable("CUSTOM_CHAT_REQUEST_TEMPLATE", CustomRequestTemplate);
+        Environment.SetEnvironmentVariable("CUSTOM_RESPONSES_REQUEST_TEMPLATE", CustomResponsesRequestTemplate);
 
         var serviceProvider = BuildProvider();
         var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
@@ -358,8 +365,14 @@ public class StartupServiceTests : IDisposable
         Assert.Equal("model-a", await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.Model));
         Assert.Equal("custom-key", await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.ApiKey));
         Assert.Equal(
+            "openai_responses",
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.Protocol));
+        Assert.Equal(
             CustomRequestTemplate,
             await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.ChatRequestTemplate));
+        Assert.Equal(
+            CustomResponsesRequestTemplate,
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.ResponsesRequestTemplate));
 
         foreach (var localAiKey in EnvMap
                      .Where(entry => entry.SettingKey.StartsWith("local_ai", StringComparison.Ordinal))

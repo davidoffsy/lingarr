@@ -82,7 +82,14 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { PLACEHOLDER, SETTINGS, SERVICE_TYPE, LOCAL_AI_PROTOCOLS, ISettings } from '@/ts'
+import {
+    PLACEHOLDER,
+    SETTINGS,
+    SERVICE_TYPE,
+    CUSTOM_PROTOCOLS,
+    LOCAL_AI_PROTOCOLS,
+    ISettings
+} from '@/ts'
 import { useSettingStore } from '@/store/setting'
 import useDebounce from '@/composables/useDebounce'
 import services from '@/services'
@@ -128,12 +135,20 @@ const templateMap: Record<string, keyof ISettings> = {
     [SERVICE_TYPE.OPENAI]: SETTINGS.OPENAI_REQUEST_TEMPLATE,
     [SERVICE_TYPE.ANTHROPIC]: SETTINGS.ANTHROPIC_REQUEST_TEMPLATE,
     [SERVICE_TYPE.LOCALAI]: SETTINGS.LOCAL_AI_CHAT_REQUEST_TEMPLATE,
-    [SERVICE_TYPE.CUSTOM]: SETTINGS.CUSTOM_CHAT_REQUEST_TEMPLATE,
     [SERVICE_TYPE.GEMINI]: SETTINGS.GEMINI_REQUEST_TEMPLATE,
     [SERVICE_TYPE.DEEPSEEK]: SETTINGS.DEEPSEEK_REQUEST_TEMPLATE,
     [SERVICE_TYPE.MISTRAL]: SETTINGS.MISTRAL_REQUEST_TEMPLATE,
     [SERVICE_TYPE.XAI]: SETTINGS.XAI_REQUEST_TEMPLATE
 }
+
+const customProtocol = computed(() => {
+    const value = settingsStore.getSetting(SETTINGS.CUSTOM_PROTOCOL)
+    // The server accepts any case and surrounding whitespace. Compare the same way, otherwise
+    // CUSTOM_PROTOCOL=OPENAI_RESPONSES translates with Responses while this editor saves the chat template.
+    return typeof value === 'string' && value.trim()
+        ? value.trim().toLowerCase()
+        : CUSTOM_PROTOCOLS.OPENAI_CHAT
+})
 
 const localAiEndpoint = computed(
     () => settingsStore.getSetting(SETTINGS.LOCAL_AI_ENDPOINT) as string
@@ -157,6 +172,12 @@ const activeTemplateKey = computed((): keyof ISettings | '' => {
         return isLocalAiGenerate.value
             ? SETTINGS.LOCAL_AI_GENERATE_REQUEST_TEMPLATE
             : SETTINGS.LOCAL_AI_CHAT_REQUEST_TEMPLATE
+    }
+    if (serviceType.value === SERVICE_TYPE.CUSTOM) {
+        // Every protocol keeps its own template, so switching never overwrites the other one's edits.
+        return customProtocol.value === CUSTOM_PROTOCOLS.OPENAI_RESPONSES
+            ? SETTINGS.CUSTOM_RESPONSES_REQUEST_TEMPLATE
+            : SETTINGS.CUSTOM_CHAT_REQUEST_TEMPLATE
     }
     return templateMap[serviceType.value] || ''
 })
@@ -219,6 +240,7 @@ const presetLabelMap: Record<string, string> = {
     local_ai_generate_request_template: 'Ollama Generate',
     local_ai_chat_request_template: 'LocalAI Chat',
     custom_chat_request_template: 'Custom Chat',
+    custom_responses_request_template: 'Custom Responses',
     deepseek_request_template: 'DeepSeek Chat',
     mistral_request_template: 'Mistral Chat',
     xai_request_template: 'xAI Chat'

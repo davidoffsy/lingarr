@@ -194,14 +194,16 @@ The `SOURCE_LANGUAGES` and `TARGET_LANGUAGES` variables should be provided as a 
 
 #### **Custom**
 
-Your own OpenAI-compatible gateway over the non-streaming Chat Completions protocol. Independent from LocalAI: address, key, model and request template live under their own `custom_*` settings, so both providers can be used in the same translation chain without sharing any of them. Existing `localai` configurations keep working unchanged.
+Your own gateway over one explicitly selected, non-streaming protocol: `openai_chat` (Chat Completions, default) or `openai_responses` (Responses). Independent from LocalAI: address, key, model, protocol and per-protocol request template live under their own `custom_*` settings, so both providers can be used in the same translation chain without sharing any of them. Existing `localai` configurations keep working unchanged.
 
 | **Environment Variable**        | **Description**                                                                 |
 |---------------------------------|---------------------------------------------------------------------------------|
-| `CUSTOM_ENDPOINT`               | Base URL or full chat completions path. A bare base URL gets `/v1/chat/completions` appended; a URL that already ends in `/v1` gets `/chat/completions`; a full path is used as it is. Example: `http://localhost:8000/v1`. |
+| `CUSTOM_PROTOCOL`               | `openai_chat` or `openai_responses`. Default `openai_chat`. The endpoint path, request body and parsed response follow this setting; a full path of the other protocol is recognised and replaced, never guessed. |
+| `CUSTOM_ENDPOINT`               | Base URL or full endpoint path of the selected protocol. A bare base URL gets `/v1/chat/completions` (or `/v1/responses`) appended; a URL that already ends in `/v1` gets `/chat/completions` (or `/responses`); a full path is used as it is. Example: `http://localhost:8000/v1`. |
 | `CUSTOM_MODEL`                  | The model to use. Load the model list with **Test connection**, or type a model id when the gateway has no `/models` endpoint. |
 | `CUSTOM_API_KEY`                | Bearer token, optional. Only needed when the gateway requires authentication. Stored encrypted. |
-| `CUSTOM_CHAT_REQUEST_TEMPLATE`  | The request template for this provider, stored separately from the LocalAI and OpenAI templates. |
+| `CUSTOM_CHAT_REQUEST_TEMPLATE`  | The request template for `openai_chat`, stored separately from the LocalAI and OpenAI templates. |
+| `CUSTOM_RESPONSES_REQUEST_TEMPLATE` | The request template for `openai_responses` (`model` + `input`), stored independently from the chat template. |
 | `AI_PROMPT`                     | The prompt template for AI-based translation services.                          |
 | `AI_USER_PROMPT`                | The user message template. Supports `{lineToTranslate}`, `{contextBefore}` and `{contextAfter}`. |
 
@@ -224,8 +226,8 @@ Shared across OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, LocalAI and Cus
 
 | **Setting** | **Environment Variable** | **Default** | **Description** |
 |-------------|--------------------------|-------------|-----------------|
-| `ai_max_tokens` | `AI_MAX_TOKENS` | `0` | Maximum tokens for one completion (thinking plus the answer). `0` (the default) omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. Not applied to LocalAI generate (Ollama `/api/generate`). |
-| `ai_thinking` | `AI_THINKING` | `auto` | Chain-of-thought control for OpenAI-compatible chat only (LocalAI chat and Custom). `auto` (the default) sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
+| `ai_max_tokens` | `AI_MAX_TOKENS` | `0` | Maximum tokens for one completion (thinking plus the answer). `0` (the default) omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Custom over Responses receives `max_output_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. Not applied to LocalAI generate (Ollama `/api/generate`). |
+| `ai_thinking` | `AI_THINKING` | `auto` | Chain-of-thought control for OpenAI-compatible chat only (LocalAI chat and Custom over `openai_chat`). `auto` (the default) sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. The Responses protocol has no `thinking` field and is left untouched. |
 
 #### **DeepL**
 

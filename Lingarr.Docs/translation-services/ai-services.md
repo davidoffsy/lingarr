@@ -11,7 +11,7 @@ All AI services follow the same pattern: select the service, provide an API key,
 3. Click the gear icon on the service row to configure its credentials.
 4. Enter the API key and choose a model. Self-hosted services such as [LocalAI](#localai) and [Custom](#custom) also ask for an endpoint.
 
-    When a service asks for an endpoint, LocalAI accepts a **base URL** or a full completion path, and [Custom](#custom) accepts a base URL or a full chat completions path.
+    When a service asks for an endpoint, LocalAI accepts a **base URL** or a full completion path, and [Custom](#custom) accepts a base URL or the full path of its selected protocol (`/v1/chat/completions` or `/v1/responses`).
     
     Choose a protocol in the LocalAI settings:
     
@@ -108,8 +108,8 @@ These two settings apply to every AI service and are configured once under **Set
 
 | **Environment Variable** | **Description** |
 |--------------------------|-----------------|
-| `AI_MAX_TOKENS` | Maximum tokens for one completion (thinking plus the answer). Default `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. LocalAI generate (Ollama `/api/generate`) is not injected. |
-| `AI_THINKING` | Chain-of-thought control. Default `auto`. Applied only to OpenAI-compatible chat, which is LocalAI chat and Custom. `auto` sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
+| `AI_MAX_TOKENS` | Maximum tokens for one completion (thinking plus the answer). Default `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Custom over Responses receives `max_output_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. LocalAI generate (Ollama `/api/generate`) is not injected. |
+| `AI_THINKING` | Chain-of-thought control. Default `auto`. Applied only to OpenAI-compatible chat, which is LocalAI chat and Custom over `openai_chat`. `auto` sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
 
 ## Environment variables
 ### OpenAI
@@ -182,31 +182,39 @@ LocalAI works with Ollama or any other OpenAI-compatible model or router.
 
 ### Custom
 
-Custom talks to your own OpenAI-compatible gateway over the non-streaming Chat Completions protocol. It is a separate provider, not a mode of LocalAI: address, key, model and request template live under their own `custom_*` settings, so both providers can be configured and used in the same translation chain without sharing any of them. Existing `localai` configurations keep working unchanged — nothing is migrated automatically — while new OpenAI-compatible gateways belong on Custom.
+Custom talks to your own gateway over one explicitly selected, non-streaming protocol: **OpenAI Chat Completions** (`openai_chat`, the default) or **OpenAI Responses** (`openai_responses`). It is a separate provider, not a mode of LocalAI: address, key, model, protocol and per-protocol request template live under their own `custom_*` settings, so both providers can be configured and used in the same translation chain without sharing any of them. Existing `localai` configurations keep working unchanged — nothing is migrated automatically — while new OpenAI-compatible gateways belong on Custom.
 
 | **Environment Variable** | **Description**                                                                                                           |
 |--------------------------|---------------------------------------------------------------------------------------------------------------------------|
-| `CUSTOM_ENDPOINT` | Base URL or full chat completions path. Example: `http://localhost:8000/v1` or `https://gateway.example.com/v1/chat/completions`. |
+| `CUSTOM_PROTOCOL` | `openai_chat` or `openai_responses`. Default `openai_chat`. Switching keeps the same address, key and model, but the gateway has to serve the selected protocol and every protocol keeps its own request template. |
+| `CUSTOM_ENDPOINT` | Base URL or a full endpoint path of the selected protocol. Example: `http://localhost:8000/v1` or `https://gateway.example.com/v1/responses`. |
 | `CUSTOM_MODEL` | The model to use. Load the gateway's model list with **Test connection**, or type a model id.                               |
 | `CUSTOM_API_KEY` | Bearer token, optional. Only needed when the gateway requires authentication. Stored encrypted.                            |
-| `CUSTOM_CHAT_REQUEST_TEMPLATE` | The request template for this provider, stored separately from the LocalAI and OpenAI templates.                          |
+| `CUSTOM_CHAT_REQUEST_TEMPLATE` | Request template used by the `openai_chat` protocol, stored separately from the LocalAI and OpenAI templates.              |
+| `CUSTOM_RESPONSES_REQUEST_TEMPLATE` | Request template used by the `openai_responses` protocol, stored independently from the chat template, so switching protocols never overwrites the other one's edits. |
 | `AI_PROMPT` | The system prompt template.                                                                                               |
 | `AI_USER_PROMPT` | The user message template.                                                                                                |
 
 As everywhere else, each variable also accepts the `_FILE` variant, see [Configuration](/getting-started/configuration).
 
-**Addresses.** Custom looks at what you enter and resolves the chat completions URL from it:
+**Protocols.** Lingarr never guesses the protocol. Pick it in the Custom settings and only that protocol's endpoint is called; a full path of the other protocol is still recognised as an API path and replaced, so switching protocols does not require retyping the address.
+
+- `openai_chat` posts to the chat completions endpoint and parses `choices[0].message.content`, with structured output requested through `response_format` for batch jobs.
+- `openai_responses` posts the same prompts as `input` messages to the responses endpoint and reads `output[].content[].text`; batch jobs request structured output through `text.format`. A response only counts as success when it completed with text — refusals, `incomplete`/`failed` responses, non-final states and empty output fail the candidate instead of being written back as a translation.
+
+**Addresses.** Custom looks at what you enter and resolves the URL of the selected protocol from it:
 
 - a base URL such as `http://localhost:8000` becomes `http://localhost:8000/v1/chat/completions`;
 - a URL that already ends in `/v1`, such as `http://localhost:8000/v1`, becomes the same `.../v1/chat/completions`;
-- a full path such as `https://gateway.example.com/v1/chat/completions` is used as it is.
+- a full path such as `https://gateway.example.com/v1/chat/completions` is used as it is;
+- with `openai_responses` the same rules apply with `/v1/responses` (or `/responses` on a URL that already ends in `/v1`) as the target path.
 
-Other known API paths (`/chat/completions`, `/completions`, `/models`, and Ollama's `/api/generate` and `/api/tags`) are recognised and replaced by the chat completions path, so a URL copied from another client does not have to be trimmed by hand. Custom never guesses a protocol and never streams: every request is a non-streaming Chat Completions call, so gateway settings that force SSE are not supported here.
+Other known API paths (`/chat/completions`, `/responses`, `/completions`, `/models`, and Ollama's `/api/generate` and `/api/tags`) are recognised and replaced by the selected protocol's path, so a URL copied from another client does not have to be trimmed by hand. Custom never streams: every request is a non-streaming call. A request template that sets `"stream": true` is rejected with a configuration error before it is sent, and a gateway that answers with an event stream (`text/event-stream` or a `data:` body) is reported as unsupported instead of being parsed as a partial or empty translation.
 
 **Authentication.** `CUSTOM_API_KEY` is optional. When it is set, the request carries `Authorization: Bearer <key>`; when it is empty, the request is sent without one and Lingarr warns that gateways requiring authentication will reject it.
 
 **Models.** **Test connection** requests the model catalogue at the `/v1/models` path of the same address, with the same bearer token, and offers the result in the model dropdown. Gateways without a `/models` endpoint are supported: the model field accepts a typed id, and a failed model list does not mean the gateway cannot translate.
 
-**Request template.** The default body is the OpenAI Chat template. It is stored under `custom_chat_request_template`, independently of `local_ai_chat_request_template` and `openai_request_template`, and is edited under **Settings > Services > Request Settings**.
+**Request template.** Each protocol has its own default body, stored independently from the other protocol and from `local_ai_chat_request_template` and `openai_request_template`: `custom_chat_request_template` for `openai_chat` (`model` + `messages`) and `custom_responses_request_template` for `openai_responses` (`model` + `input`). **Settings > Services > Request Settings** follows `custom_protocol`, so the editor always shows the template that is actually in use.
 
 **Translation chain.** A chain entry is one provider plus an optional model, so `custom` can appear more than once with a different model on every line. When a gateway answers `401`, Lingarr treats the credentials as wrong for that gateway and skips its remaining models before trying the next provider in the chain; a missing model, a rate limit or a timeout moves on after the normal retries. When the lines of one subtitle end up translated by more than one model, the translator info and the per-line view report the mixed sources.

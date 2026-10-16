@@ -1,10 +1,8 @@
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
-using Lingarr.Contracts.Models.Batch;
 using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models.Integrations.Translation;
-using Lingarr.Server.Services.Translation.Batch;
 
 namespace Lingarr.Server.Services.Translation.OpenAiCompatible;
 
@@ -14,7 +12,7 @@ namespace Lingarr.Server.Services.Translation.OpenAiCompatible;
 /// classification and response parsing. Retry and fallback policy stay with the caller
 /// (the translation service), which owns the configured retry settings.
 /// </summary>
-public sealed class OpenAiChatCompletionsClient
+public sealed class OpenAiChatCompletionsClient : IOpenAiCompatibleCompletionClient
 {
     private readonly HttpClient _httpClient;
     private readonly IRequestTemplateService _requestTemplateService;
@@ -59,7 +57,8 @@ public sealed class OpenAiChatCompletionsClient
         CancellationToken cancellationToken)
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(requestTemplate, replacements);
-        var response = await PostChatRequestAsync(endpoint, apiKey, bodyJson, thinking, maxTokens, cancellationToken);
+        NonStreamingPolicy.EnsureRequestIsNotStreaming(bodyJson, _serviceLabel);
+        using var response = await PostChatRequestAsync(endpoint, apiKey, bodyJson, thinking, maxTokens, cancellationToken);
         return await ReadChatContentAsync(endpoint, response, cancellationToken);
     }
 
@@ -77,18 +76,25 @@ public sealed class OpenAiChatCompletionsClient
         int maxTokens,
         CancellationToken cancellationToken)
     {
+        // Reject a streaming template before either attempt. A configuration error must not fall
+        // through into the JSON fallback, which would send the same streaming request again.
+        var bodyJson = _requestTemplateService.BuildRequestBody(requestTemplate, replacements);
+        NonStreamingPolicy.EnsureRequestIsNotStreaming(bodyJson, _serviceLabel);
+
         try
         {
             return await CompleteBatchWithStructuredOutputAsync(
                 endpoint, apiKey, requestTemplate, replacements, thinking, maxTokens, cancellationToken);
         }
         // Fall back to plain JSON only for failures that a different request shape can fix. Cancellation
-        // must stay cancellation, credentials must stay credentials (the chain skips the provider), and a
-        // rate limit must not be re-sent immediately as a second request.
+        // must stay cancellation, credentials must stay credentials (the chain skips the provider), a
+        // rate limit must not be re-sent immediately as a second request, and a terminal response
+        // (refusal, failed payload, event stream) must not be retried as a different shape.
         catch (Exception ex) when (ex is not (OperationCanceledException
             or TranslationAuthenticationException
             or TranslationConfigurationException
-            or TranslationResponseException))
+            or TranslationResponseException
+            or TranslationUnusableResponseException))
         {
             _logger.LogWarning(ex, "Structured output failed, falling back to JSON parsing");
             return await CompleteBatchWithJsonParsingAsync(
@@ -115,20 +121,8 @@ public sealed class OpenAiChatCompletionsClient
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "{ServiceLabel} chat API request to {Endpoint} failed with status {StatusCode}: {ResponseContent}",
-                _serviceLabel,
-                endpoint,
-                response.StatusCode,
-                responseContent);
-            var error = $"{_serviceLabel} chat API request failed with status {response.StatusCode}: {responseContent}";
-            throw HttpFailure.FromResponse(_serviceLabel, response, error);
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = await ReadSuccessfulBodyAsync(
+            endpoint, response, "chat API request", cancellationToken);
         var chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
 
         if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
@@ -137,6 +131,37 @@ public sealed class OpenAiChatCompletionsClient
         }
 
         return chatResponse.Choices[0].Message.Content;
+    }
+
+    /// <summary>
+    /// Reads the body of a response and either returns it or throws the classified HTTP failure.
+    /// Event-stream answers are rejected here: a streamed fragment would otherwise be parsed as a
+    /// half-finished JSON document.
+    /// </summary>
+    private async Task<string> ReadSuccessfulBodyAsync(
+        string endpoint,
+        HttpResponseMessage response,
+        string requestDescription,
+        CancellationToken cancellationToken)
+    {
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            _logger.LogError(
+                "{ServiceLabel} {RequestDescription} to {Endpoint} failed with status {StatusCode}: {ResponseContent}",
+                _serviceLabel,
+                requestDescription,
+                endpoint,
+                response.StatusCode,
+                responseBody);
+            var error =
+                $"{_serviceLabel} {requestDescription} failed with status {response.StatusCode}: {responseBody}";
+            throw HttpFailure.FromResponse(_serviceLabel, response, error);
+        }
+
+        NonStreamingPolicy.EnsureResponseIsNotStreaming(
+            response.Content.Headers.ContentType?.MediaType, responseBody, _serviceLabel);
+        return responseBody;
     }
 
     private async Task<Dictionary<int, string>> CompleteBatchWithStructuredOutputAsync(
@@ -196,22 +221,9 @@ public sealed class OpenAiChatCompletionsClient
             ["response_format"] = responseFormat
         });
 
-        var response = await PostChatRequestAsync(endpoint, apiKey, bodyJson, thinking, maxTokens, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "{ServiceLabel} structured output batch request failed with status {StatusCode}: {ResponseContent}",
-                _serviceLabel,
-                response.StatusCode,
-                responseContent);
-            throw HttpFailure.FromResponse(
-                _serviceLabel,
-                response,
-                $"{_serviceLabel} structured output batch request failed with status {response.StatusCode}: {responseContent}");
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var response = await PostChatRequestAsync(endpoint, apiKey, bodyJson, thinking, maxTokens, cancellationToken);
+        var responseBody = await ReadSuccessfulBodyAsync(
+            endpoint, response, "structured output batch request", cancellationToken);
         var chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
         if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
         {
@@ -219,31 +231,7 @@ public sealed class OpenAiChatCompletionsClient
         }
 
         var translatedJson = chatResponse.Choices[0].Message.Content;
-
-        try
-        {
-            // Parse the wrapper object first, extract the translations array
-            var responseWrapper = JsonSerializer.Deserialize<JsonElement>(translatedJson);
-            if (!responseWrapper.TryGetProperty("translations", out var translationsElement))
-            {
-                throw new TranslationParseException("Response does not contain 'translations' property");
-            }
-
-            var translatedItems =
-                JsonSerializer.Deserialize<List<StructuredBatchResponse>>(translationsElement.GetRawText());
-
-            if (translatedItems == null)
-            {
-                throw new TranslationParseException("Failed to deserialize translated subtitles");
-            }
-
-            return BatchResponseMerger.MergeByPosition(translatedItems);
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "Failed to parse structured JSON response: {Json}", translatedJson);
-            throw new TranslationParseException("Failed to parse structured translated subtitles", ex);
-        }
+        return BatchJsonParser.ParseStructuredWrapper(translatedJson, _logger);
     }
 
     private async Task<Dictionary<int, string>> CompleteBatchWithJsonParsingAsync(
@@ -257,22 +245,9 @@ public sealed class OpenAiChatCompletionsClient
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(requestTemplate, replacements);
 
-        var response = await PostChatRequestAsync(endpoint, apiKey, bodyJson, thinking, maxTokens, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "{ServiceLabel} JSON parsing batch request failed with status {StatusCode}: {ResponseContent}",
-                _serviceLabel,
-                response.StatusCode,
-                responseContent);
-            throw HttpFailure.FromResponse(
-                _serviceLabel,
-                response,
-                $"{_serviceLabel} JSON parsing batch request failed with status {response.StatusCode}: {responseContent}");
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        using var response = await PostChatRequestAsync(endpoint, apiKey, bodyJson, thinking, maxTokens, cancellationToken);
+        var responseBody = await ReadSuccessfulBodyAsync(
+            endpoint, response, "JSON parsing batch request", cancellationToken);
         var chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
 
         if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
@@ -280,34 +255,7 @@ public sealed class OpenAiChatCompletionsClient
             throw new TranslationException($"No completion choices returned from {_serviceLabel}");
         }
 
-        // Try to extract JSON
         var translatedJson = chatResponse.Choices[0].Message.Content;
-        var jsonStart = translatedJson.IndexOf('[');
-        var jsonEnd = translatedJson.LastIndexOf(']');
-        if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart)
-        {
-            translatedJson = translatedJson.Substring(jsonStart, jsonEnd - jsonStart + 1);
-        }
-
-        try
-        {
-            var translatedItems = JsonSerializer.Deserialize<List<StructuredBatchResponse>>(translatedJson,
-                new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-
-            if (translatedItems == null)
-            {
-                throw new TranslationParseException("Failed to deserialize translated subtitles from JSON parsing");
-            }
-
-            return BatchResponseMerger.MergeByPosition(translatedItems);
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "Failed to parse JSON response: {Json}", translatedJson);
-            throw new TranslationParseException("Failed to parse JSON translated subtitles", ex);
-        }
+        return BatchJsonParser.ParseJsonArray(translatedJson, _logger);
     }
 }

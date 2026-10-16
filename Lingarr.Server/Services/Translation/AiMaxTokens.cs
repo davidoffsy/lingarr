@@ -56,6 +56,22 @@ public static class AiMaxTokens
         });
     }
 
+    /// <summary>
+    /// OpenAI Responses: the output budget is <c>max_output_tokens</c>, not <c>max_tokens</c>.
+    /// </summary>
+    public static string ApplyResponses(IRequestTemplateService templates, string bodyJson, int maxTokens)
+    {
+        if (maxTokens <= 0)
+        {
+            return bodyJson;
+        }
+
+        return templates.SetRequestFields(bodyJson, new Dictionary<string, object?>
+        {
+            ["max_output_tokens"] = maxTokens
+        });
+    }
+
     public static string ApplyGemini(IRequestTemplateService templates, string bodyJson, int maxTokens)
     {
         if (maxTokens <= 0)

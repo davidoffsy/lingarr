@@ -71,7 +71,19 @@ public static class SettingKeys
             public const string Model = "custom_model";
             public const string Endpoint = "custom_endpoint";
             public const string ApiKey = "custom_api_key";
+            public const string Protocol = "custom_protocol";
             public const string ChatRequestTemplate = "custom_chat_request_template";
+            public const string ResponsesRequestTemplate = "custom_responses_request_template";
+
+            /// <summary>
+            /// Protocols Custom can speak. Every protocol is non-streaming and keeps its own request
+            /// template key, so switching protocols never overwrites the other protocol's edits.
+            /// </summary>
+            public static class Protocols
+            {
+                public const string OpenAiChat = "openai_chat";
+                public const string OpenAiResponses = "openai_responses";
+            }
         }
 
         public static class DeepL

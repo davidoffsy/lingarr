@@ -63,12 +63,17 @@ public class MigrationTests
             await using var command = connection.CreateCommand();
             foreach (var key in new[]
                      {
-                         "custom_endpoint", "custom_model", "custom_api_key", "custom_chat_request_template"
+                         "custom_endpoint", "custom_model", "custom_api_key", "custom_chat_request_template",
+                         "custom_responses_request_template"
                      })
             {
                 command.CommandText = $"SELECT value FROM settings WHERE key = '{key}'";
                 Assert.Equal(string.Empty, await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
             }
+
+            // The protocol keeps an explicit default so existing installations stay on Chat Completions.
+            command.CommandText = "SELECT value FROM settings WHERE key = 'custom_protocol'";
+            Assert.Equal("openai_chat", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
         }
         finally
         {
@@ -97,10 +102,12 @@ public class MigrationTests
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             Assert.Equal(System.Data.ConnectionState.Open, connection.State);
 
-            // M0032 columns and M0031 keys must be gone, not just the version records.
+            // M0032 columns and M0031/M0033 keys must be gone, not just the version records.
             Assert.False(await ColumnExistsAsync(connection, "translation_request_lines", "model"));
             Assert.False(await ColumnExistsAsync(connection, "statistics", "lines_by_source_json"));
             Assert.Equal(0L, await CountSettingsAsync(connection, "custom_endpoint"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_protocol"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_responses_request_template"));
         }
         finally
         {
@@ -131,7 +138,7 @@ public class MigrationTests
                 await seedConnection.OpenAsync(TestContext.Current.CancellationToken);
                 await using var command = seedConnection.CreateCommand();
                 command.CommandText =
-                    "INSERT INTO settings (key, value) VALUES ('custom_endpoint', 'http://hand-edited')";
+                    "INSERT INTO settings (key, value) VALUES ('custom_endpoint', 'http://hand-edited'), ('custom_protocol', 'openai_responses')";
                 await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
             }
 
@@ -146,7 +153,17 @@ public class MigrationTests
                 await valueCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
             Assert.Equal(1L, await CountSettingsAsync(connection, "custom_endpoint"));
 
-            foreach (var key in new[] { "custom_model", "custom_api_key", "custom_chat_request_template" })
+            // A hand-edited protocol survives the new migration too.
+            valueCommand.CommandText = "SELECT value FROM settings WHERE key = 'custom_protocol'";
+            Assert.Equal("openai_responses",
+                await valueCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(1L, await CountSettingsAsync(connection, "custom_protocol"));
+
+            foreach (var key in new[]
+                     {
+                         "custom_model", "custom_api_key", "custom_chat_request_template",
+                         "custom_responses_request_template"
+                     })
             {
                 await using var command = connection.CreateCommand();
                 command.CommandText = $"SELECT value FROM settings WHERE key = '{key}'";

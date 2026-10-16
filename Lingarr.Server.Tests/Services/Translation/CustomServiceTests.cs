@@ -14,6 +14,7 @@ using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.Batch;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Moq.Protected;
@@ -25,6 +26,7 @@ public class CustomServiceTests
 {
     private const string BaseEndpoint = "http://localhost:8000/v1";
     private const string ChatEndpoint = "http://localhost:8000/v1/chat/completions";
+    private const string ResponsesEndpoint = "http://localhost:8000/v1/responses";
 
     /// <summary>
     /// A response where the model left an unescaped quote inside a translated line.
@@ -327,6 +329,230 @@ public class CustomServiceTests
         VerifyRequestUri("http://localhost:8000/v1/models", Times.Once());
     }
 
+    [Fact]
+    public async Task TranslateAsync_ResponsesProtocol_PostsToResponsesEndpoint()
+    {
+        UseSettings(BaseEndpoint, protocol: "openai_responses");
+        SetupResponse(() => ResponsesResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestUri(ResponsesEndpoint, Times.Once());
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_ResponsesProtocol_FullEndpointPath_IsPreserved()
+    {
+        UseSettings(ResponsesEndpoint, protocol: "openai_responses");
+        SetupResponse(() => ResponsesResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestUri(ResponsesEndpoint, Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_ResponsesProtocol_UsesItsOwnTemplate()
+    {
+        // The chat template stays edited; the Responses request must come from the Responses key.
+        UseSettings(
+            BaseEndpoint,
+            protocol: "openai_responses",
+            chatTemplate: "{\"sentinel\":true}",
+            responsesTemplate: "");
+        var bodies = CaptureRequestBodies(() => ResponsesResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        using var document = JsonDocument.Parse(bodies[0]);
+        Assert.False(document.RootElement.TryGetProperty("sentinel", out _));
+        var input = document.RootElement.GetProperty("input");
+        Assert.Equal("system", input[0].GetProperty("role").GetString());
+        Assert.Equal("Hello", input[1].GetProperty("content").GetString());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_ResponsesProtocol_MaxTokensUsesResponsesField()
+    {
+        UseSettings(BaseEndpoint, protocol: "openai_responses", aiMaxTokens: "4096");
+        var bodies = CaptureRequestBodies(() => ResponsesResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        using var document = JsonDocument.Parse(bodies[0]);
+        Assert.Equal(4096, document.RootElement.GetProperty("max_output_tokens").GetInt32());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_ResponsesProtocol_ServiceUnavailable_IsRetried()
+    {
+        UseSettings(BaseEndpoint, protocol: "openai_responses");
+        SetupResponseSequence(
+            new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.ServiceUnavailable,
+                Content = new StringContent("{\"error\":\"busy\"}", Encoding.UTF8, "application/json")
+            },
+            ResponsesResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestsSent(2);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_UnsupportedProtocol_ThrowsConfigurationError()
+    {
+        // anthropic_messages arrives in a later change; until then the value must fail loudly
+        // instead of silently falling back to Chat Completions.
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        SetupResponse(() => ChatResponse("Hola"));
+
+        var exception = await Assert.ThrowsAsync<TranslationConfigurationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        Assert.Contains("anthropic_messages", exception.Message);
+        Assert.Contains("openai_responses", exception.Message);
+        VerifyRequestsSent(0);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_EmptyProtocol_KeepsChatCompletions()
+    {
+        // Records written before custom_protocol existed keep the historical behaviour.
+        UseSettings(BaseEndpoint, protocol: string.Empty);
+        SetupResponse(() => ChatResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestUri(ChatEndpoint, Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_ResponsesProtocol_MissingPosition_IsCompletedByFillLoop()
+    {
+        UseSettings(BaseEndpoint, protocol: "openai_responses");
+        SetupResponseSequence(
+            ResponsesResponse("{\"translations\":[{\"position\":1,\"line\":\"Hola\"}]}"),
+            ResponsesResponse("{\"translations\":[{\"position\":2,\"line\":\"Mundo\"}]}"));
+
+        var filled = await BatchFillLoop.FillAsync(
+            _service, Batch(), "en", "es", new Mock<ILogger>().Object, CancellationToken.None);
+
+        // The model answered position 1 only; the fill loop retried position 2 instead of
+        // accepting a half-filled batch or inventing a line.
+        Assert.Equal(2, filled.Count);
+        Assert.Equal("Hola", filled[1]);
+        Assert.Equal("Mundo", filled[2]);
+        VerifyRequestsSent(2);
+    }
+
+    [Fact]
+    public async Task ProofreadAsync_ResponsesProtocol_PostsResponsesRequest()
+    {
+        UseSettings(BaseEndpoint, protocol: "openai_responses");
+        var bodies = CaptureRequestBodies(() => ResponsesResponse("Hola corregido"));
+
+        var result = await _service.ProofreadAsync("Hello", "Hola", "en", "es", CancellationToken.None);
+
+        Assert.Equal("Hola corregido", result);
+        Assert.Single(bodies);
+        using var document = JsonDocument.Parse(bodies[0]);
+        var input = document.RootElement.GetProperty("input");
+        Assert.Contains("proofread the line", input[0].GetProperty("content").GetString());
+        Assert.Equal("Hola", input[1].GetProperty("content").GetString());
+        VerifyRequestUri(ResponsesEndpoint, Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_ResponsesProtocol_IgnoresCaseAndWhitespace()
+    {
+        UseSettings(BaseEndpoint, protocol: " OpenAI_Responses ");
+        SetupResponse(() => ResponsesResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestUri(ResponsesEndpoint, Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_ResponsesRefusal_IsNotRetried()
+    {
+        UseSettings(BaseEndpoint, protocol: "openai_responses");
+        SetupResponse(ResponsesRefusal);
+
+        var exception = await Assert.ThrowsAsync<TranslationUnusableResponseException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        Assert.Contains("refused", exception.Message);
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_ResponsesRefusal_IsNotRetried()
+    {
+        UseSettings(BaseEndpoint, protocol: "openai_responses");
+        SetupResponse(ResponsesRefusal);
+
+        await Assert.ThrowsAsync<TranslationUnusableResponseException>(
+            () => _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None));
+
+        // A refusal is terminal: no JSON fallback and no rate-limit retry.
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_StreamingTemplate_IsRejectedWithoutRequest()
+    {
+        const string streamingTemplate =
+            "{\"model\":\"{model}\",\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"{userMessage}\"}]}";
+        UseSettings(BaseEndpoint, chatTemplate: streamingTemplate);
+
+        var exception = await Assert.ThrowsAsync<TranslationConfigurationException>(
+            () => _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None));
+
+        Assert.Contains("\"stream\": true", exception.Message);
+        VerifyRequestsSent(0);
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_EventStream_IsNotRetriedAsFallback()
+    {
+        UseSettings(BaseEndpoint);
+        SetupResponse(() => new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.OK,
+            Content = new StringContent("data: [DONE]\n\n", Encoding.UTF8, "application/json")
+        });
+
+        await Assert.ThrowsAsync<TranslationUnusableResponseException>(
+            () => _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None));
+
+        VerifyRequestsSent(1);
+    }
+
+    private static HttpResponseMessage ResponsesRefusal() =>
+        JsonResponse(new
+        {
+            status = "completed",
+            output = new[]
+            {
+                new
+                {
+                    type = "message",
+                    content = new[] { new { type = "refusal", refusal = "no" } }
+                }
+            }
+        });
+
     private static List<BatchSubtitleItem> Batch() =>
     [
         new() { Position = 1, Line = "Hello" },
@@ -335,6 +561,20 @@ public class CustomServiceTests
 
     private static HttpResponseMessage ChatResponse(string translatedJson) =>
         JsonResponse(new { choices = new[] { new { message = new { content = translatedJson } } } });
+
+    private static HttpResponseMessage ResponsesResponse(string translatedJson) =>
+        JsonResponse(new
+        {
+            status = "completed",
+            output = new[]
+            {
+                new
+                {
+                    type = "message",
+                    content = new[] { new { type = "output_text", text = translatedJson } }
+                }
+            }
+        });
 
     private static HttpResponseMessage JsonResponse(object body) => new()
     {
@@ -346,13 +586,17 @@ public class CustomServiceTests
         string endpoint,
         string model = "my-model",
         string? aiThinking = null,
-        string? aiMaxTokens = null)
+        string? aiMaxTokens = null,
+        string? protocol = null,
+        string chatTemplate = "",
+        string responsesTemplate = "")
     {
         var settings = new Dictionary<string, string>
         {
             { SettingKeys.Translation.Custom.Model, model },
             { SettingKeys.Translation.Custom.Endpoint, endpoint },
-            { SettingKeys.Translation.Custom.ChatRequestTemplate, "" },
+            { SettingKeys.Translation.Custom.ChatRequestTemplate, chatTemplate },
+            { SettingKeys.Translation.Custom.ResponsesRequestTemplate, responsesTemplate },
             { SettingKeys.Translation.AiPrompt, "Translate from {sourceLanguage} to {targetLanguage}" },
             { SettingKeys.Translation.AiUserPrompt, "{lineToTranslate}" },
             { SettingKeys.Translation.ProofreadPrompt, "Please proofread the line from {sourceLanguage} to {targetLanguage}" },
@@ -372,6 +616,11 @@ public class CustomServiceTests
         if (aiMaxTokens != null)
         {
             settings[SettingKeys.Translation.AiMaxTokens] = aiMaxTokens;
+        }
+
+        if (protocol != null)
+        {
+            settings[SettingKeys.Translation.Custom.Protocol] = protocol;
         }
 
         _settingsMock.Setup(settingService => settingService.GetSettings(It.IsAny<IEnumerable<string>>()))
