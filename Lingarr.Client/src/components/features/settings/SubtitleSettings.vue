@@ -11,8 +11,8 @@
                     <span class="font-semibold">Scan embedded MKV subtitles:</span>
                     When enabled, automatic and bulk translation will probe this media's MKV for text
                     subtitle tracks (SRT / ASS / SSA). Image tracks such as PGS are skipped. Movie
-                    and show lists are not probed. Default is off so existing libraries stay
-                    unchanged.
+                    and show lists are not probed. Enabled by default on new installations;
+                    existing settings are preserved.
                 </div>
                 <ToggleButton v-model="scanEmbeddedSubtitles">
                     <span class="text-primary-content text-sm font-medium">
@@ -157,7 +157,7 @@ const isValid = reactive({
 
 const scanEmbeddedSubtitles = computed({
     get: (): string =>
-        (settingsStore.getSetting(SETTINGS.SCAN_EMBEDDED_SUBTITLES) as string) ?? 'false',
+        (settingsStore.getSetting(SETTINGS.SCAN_EMBEDDED_SUBTITLES) as string) ?? 'true',
     set: (newValue: string): void => {
         settingsStore.updateSetting(SETTINGS.SCAN_EMBEDDED_SUBTITLES, newValue, true)
         saveNotification.value?.show()

@@ -106,7 +106,7 @@ Each report also carries an installation identifier. This is a random value gene
 | `SOURCE_LANGUAGES`       | A minified JSON array of source languages for translation. |
 | `TARGET_LANGUAGES`       | A minified JSON array of target languages for translation. |
 | `USE_BATCH_TRANSLATION`  | Set to `true` to translate subtitles in batches with AI services, defaults to false. |
-| `SCAN_EMBEDDED_SUBTITLES` | Set to `true` to probe MKV text tracks (SRT / ASS / SSA) during automatic and bulk translation. Movie and show lists are never probed. Defaults to false. |
+| `SCAN_EMBEDDED_SUBTITLES` | Set to `true` to probe MKV text tracks (SRT / ASS / SSA) during automatic and bulk translation. Movie and show lists are never probed. Defaults to true for new installations; existing settings are preserved. |
 | `EXTRACT_EMBEDDED_SOURCE` | Set to `true` to write the selected source track as a sidecar next to the video so Plex / Emby can switch languages. Defaults to true. Translation of embedded tracks always extracts this file first. |
 | `EXTRACT_TIMEOUT_MINUTES` | Minutes ffmpeg may spend copying an embedded text track on demand. Defaults to `60`. Automatic / bulk extract uses a 2-minute timeout. |
 
