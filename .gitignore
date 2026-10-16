@@ -59,3 +59,9 @@ local_nas.db
 
 # Ansible
 ansible_env/
+
+# Local scratch
+/generated/
+/sample/
+/samples/
+/docs/

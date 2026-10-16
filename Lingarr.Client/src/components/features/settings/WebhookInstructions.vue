@@ -2,11 +2,12 @@
     <CardComponent title="Webhook">
         <template #description>
             Configure download webhooks in Radarr and Sonarr to sync new media. Enable automatic
-            translation in Integration settings to translate its subtitles immediately. The URL includes a Lingarr-generated secret — do not use Lingarr's API
+            translation below to translate its subtitles immediately. The URL includes a Lingarr-generated secret — do not use Lingarr's API
             key or the Radarr/Sonarr API keys. Radarr and Sonarr share one secret; regenerating it
             invalidates both URLs.
         </template>
         <template #content>
+            <SaveNotification ref="saveNotification" />
             <div class="flex flex-col space-y-2">
                 <p v-if="loadError" class="text-sm text-red-500">
                     {{ loadError }}
@@ -48,6 +49,16 @@
                     </div>
                 </template>
             </div>
+            <div class="mt-4 flex flex-col space-y-2">
+                <ToggleButton v-model="arrWebhookAutoTranslate">
+                    <span class="text-sm font-medium text-primary-content">
+                        Automatically translate subtitles on new media imports
+                    </span>
+                </ToggleButton>
+                <p class="text-sm text-secondary-content/80">
+                    When off, download webhooks only sync new media. Scheduled translation tasks are unaffected.
+                </p>
+            </div>
         </template>
     </CardComponent>
 </template>
@@ -56,6 +67,10 @@
 import { computed, onMounted, ref } from 'vue'
 import CardComponent from '@/components/common/CardComponent.vue'
 import ButtonComponent from '@/components/common/ButtonComponent.vue'
+import SaveNotification from '@/components/common/SaveNotification.vue'
+import ToggleButton from '@/components/common/ToggleButton.vue'
+import { useSettingStore } from '@/store/setting'
+import { SETTINGS } from '@/ts'
 import services from '@/services'
 import { resolveUrl } from '@/utils/baseUrl'
 
@@ -64,6 +79,15 @@ const loading = ref(true)
 const regenerating = ref(false)
 const loadError = ref('')
 const copied = ref<'radarr' | 'sonarr' | ''>('')
+const saveNotification = ref<InstanceType<typeof SaveNotification> | null>(null)
+const settingsStore = useSettingStore()
+const arrWebhookAutoTranslate = computed({
+    get: (): string => (settingsStore.getSetting(SETTINGS.ARR_WEBHOOK_AUTO_TRANSLATE) as string) ?? 'true',
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.ARR_WEBHOOK_AUTO_TRANSLATE, newValue, true)
+        saveNotification.value?.show()
+    }
+})
 
 const radarrWebhookUrl = computed(() => webhookUrl('/api/webhook/radarr'))
 const sonarrWebhookUrl = computed(() => webhookUrl('/api/webhook/sonarr'))
