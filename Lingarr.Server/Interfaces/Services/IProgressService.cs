@@ -23,13 +23,21 @@ public interface IProgressService
     /// <summary>
     /// Saves a translated line to the database and broadcasts it via SignalR.
     /// </summary>
+    /// <param name="request">The translation request the line belongs to.</param>
+    /// <param name="position">Position of the line in the subtitle file.</param>
+    /// <param name="source">Source text of the line.</param>
+    /// <param name="target">Translated text of the line.</param>
+    /// <param name="service">Provider that produced the translation.</param>
+    /// <param name="pair">Language pair the provider used, when it differs from the requested one.</param>
+    /// <param name="model">Model that produced the translation, when the provider uses one.</param>
     Task EmitLine(
         TranslationRequest request,
         int position,
         string source,
         string target,
         string? service = null,
-        LanguagePair? pair = null);
+        LanguagePair? pair = null,
+        string? model = null);
 
     /// <summary>
     /// Saves multiple translated lines to the database and broadcasts them via SignalR.
@@ -38,7 +46,13 @@ public interface IProgressService
 
     /// <summary>
     /// Applies a proofread revision to the stored line for a position and broadcasts it via SignalR.
-    /// The service that originally translated the line is preserved.
+    /// When a proofreading service is supplied, the line is attributed to it with the model it used.
     /// </summary>
-    Task EmitProofreadLine(TranslationRequest request, int position, string source, string target, string? service);
+    Task EmitProofreadLine(
+        TranslationRequest request,
+        int position,
+        string source,
+        string target,
+        string? service,
+        string? model = null);
 }

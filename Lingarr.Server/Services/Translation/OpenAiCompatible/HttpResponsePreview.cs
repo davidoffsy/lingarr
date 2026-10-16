@@ -1,6 +1,6 @@
 using System.Net.Http.Headers;
 
-namespace Lingarr.Server.Services.Translation.LocalAi;
+namespace Lingarr.Server.Services.Translation.OpenAiCompatible;
 
 internal static class HttpResponsePreview
 {

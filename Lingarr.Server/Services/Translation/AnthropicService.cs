@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
@@ -6,12 +5,14 @@ using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Models.Batch;
 using Lingarr.Contracts.Translation;
 using Lingarr.Core.Configuration;
+using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Services.Translation.Batch;
 using Lingarr.Server.Services.Translation.Base;
 
 namespace Lingarr.Server.Services.Translation;
 
-public class AnthropicService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService
+public class AnthropicService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService, IModelOverridable
 {
     private readonly string? _endpoint = "https://api.anthropic.com/v1";
     private readonly HttpClient _httpClient;
@@ -26,6 +27,9 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
 
     /// <inheritdoc />
     public override string? ModelName => _model;
+
+    /// <inheritdoc />
+    public void OverrideModel(string model) => SetModelOverride(model);
 
     // retry settings
     private int _maxRetries;
@@ -75,7 +79,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                 SettingKeys.Translation.RetryDelayMultiplier,
                 SettingKeys.Translation.LanguageCodeFormat
             ]);
-            _model = settings[SettingKeys.Translation.Anthropic.Model];
+            _model = ResolveModel(settings[SettingKeys.Translation.Anthropic.Model]);
             _apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.Anthropic.ApiKey);
             _version = settings[SettingKeys.Translation.Anthropic.Version];
             _requestTemplate = !string.IsNullOrEmpty(settings[SettingKeys.Translation.Anthropic.RequestTemplate])
@@ -144,7 +148,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                 var replacements = GetReplacements(_model!, text, contextLinesBefore, contextLinesAfter);
                 return await CompleteWithAnthropicApi(replacements, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -161,6 +165,12 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -194,7 +204,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                 var replacements = GetProofreadReplacements(_model!, sourceText, translatedText);
                 return await CompleteWithAnthropicApi(replacements, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -211,6 +221,12 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -238,19 +254,14 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
         var response = await _httpClient.PostAsync($"{_endpoint}/messages", content, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
-            {
-                throw new HttpRequestException(
-                    $"Anthropic returned {response.StatusCode}",
-                    null, response.StatusCode);
-            }
-
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError(
                 "Anthropic API request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode,
                 responseContent);
-            throw new TranslationException(
+            throw HttpFailure.FromResponse(
+                "Anthropic",
+                response,
                 $"Anthropic API request failed with status {response.StatusCode}: {responseContent}");
         }
 
@@ -316,7 +327,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
             {
                 return await TranslateBatchWithAnthropicApi(subtitleBatch, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -333,6 +344,12 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -408,19 +425,14 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
         var response = await _httpClient.PostAsync($"{_endpoint}/messages", content, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
-            {
-                throw new HttpRequestException(
-                    $"Batch translation using Anthropic failed with {response.StatusCode}.",
-                    null, response.StatusCode);
-            }
-
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError(
                 "Anthropic batch API request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode, 
                 responseContent);
-            throw new TranslationException(
+            throw HttpFailure.FromResponse(
+                "Anthropic",
+                response,
                 $"Anthropic batch API request failed with status {response.StatusCode}: {responseContent}");
         }
 
@@ -468,7 +480,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                 })
                 .ToList();
 
-            return MergeByPosition(translatedItems);
+            return BatchResponseMerger.MergeByPosition(translatedItems);
         }
         catch (Exception ex)
         {

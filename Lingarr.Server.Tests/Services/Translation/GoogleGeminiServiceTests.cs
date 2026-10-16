@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Models.Batch;
 using Lingarr.Core.Configuration;
+using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Translation;
@@ -397,7 +398,7 @@ public class GoogleGeminiServiceTests
             () => _service.TranslateAsync("Source Text", "en", "es", null, null, CancellationToken.None));
 
         Assert.Contains("Retry limit reached", ex.Message);
-        Assert.IsType<HttpRequestException>(ex.InnerException);
+        Assert.IsType<TranslationResponseException>(ex.InnerException);
     }
 
     [Theory]
@@ -423,7 +424,43 @@ public class GoogleGeminiServiceTests
             () => _service.TranslateBatchAsync(batch, "en", "es", CancellationToken.None));
 
         Assert.Contains("Retry limit reached", ex.Message);
-        Assert.IsType<HttpRequestException>(ex.InnerException);
+        Assert.IsType<TranslationResponseException>(ex.InnerException);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_Unauthorized_DoesNotRetry()
+    {
+        // Arrange
+        var settings = GetDefaultSettings();
+        _settingsMock.Setup(s => s.GetSettings(It.IsAny<IEnumerable<string>>())).ReturnsAsync(settings);
+        SetupResponse(HttpStatusCode.Unauthorized);
+
+        // The authentication failure has to survive the retry loop, otherwise the translation chain
+        // cannot skip the remaining models of this provider.
+        var exception = await Assert.ThrowsAsync<TranslationAuthenticationException>(
+            () => _service.TranslateAsync("Source Text", "en", "es", null, null, CancellationToken.None));
+
+        Assert.Contains("Unauthorized", exception.Message);
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_TooManyRequests_IsRetriedUntilRetriesAreExhausted()
+    {
+        // Arrange
+        var settings = GetDefaultSettings();
+        settings[SettingKeys.Translation.MaxRetries] = "2";
+        settings[SettingKeys.Translation.RetryDelay] = "0"; // No delay to keep the test fast
+        _settingsMock.Setup(s => s.GetSettings(It.IsAny<IEnumerable<string>>())).ReturnsAsync(settings);
+        SetupResponse(HttpStatusCode.TooManyRequests);
+
+        var exception = await Assert.ThrowsAsync<TranslationException>(
+            () => _service.TranslateAsync("Source Text", "en", "es", null, null, CancellationToken.None));
+
+        Assert.Contains("Retry limit reached", exception.Message);
+        var inner = Assert.IsType<TranslationResponseException>(exception.InnerException);
+        Assert.Equal(HttpStatusCode.TooManyRequests, inner.StatusCode);
+        VerifyRequestsSent(2); // MaxRetries
     }
 
     [Fact]
@@ -714,5 +751,28 @@ public class GoogleGeminiServiceTests
             { SettingKeys.Translation.RetryDelayMultiplier, "1" },
             { SettingKeys.Translation.LanguageCodeFormat, "false" }
         };
+    }
+
+    /// <summary>
+    /// Answers every request with a freshly built response, so an attempt never reads content that a
+    /// previous attempt already consumed.
+    /// </summary>
+    private void SetupResponse(HttpStatusCode statusCode)
+    {
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => new HttpResponseMessage { StatusCode = statusCode });
+    }
+
+    private void VerifyRequestsSent(int count)
+    {
+        _httpMessageHandlerMock.Protected().Verify(
+            "SendAsync",
+            Times.Exactly(count),
+            ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
     }
 }

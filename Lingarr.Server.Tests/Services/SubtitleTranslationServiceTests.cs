@@ -124,7 +124,8 @@ public class SubtitleTranslationServiceTests
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
-                It.IsAny<LanguagePair?>()))
+                It.IsAny<LanguagePair?>(),
+                It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
         progressServiceMock
             .Setup(p => p.EmitLines(It.IsAny<TranslationRequest>(), It.IsAny<List<TranslatedLineData>>()))
@@ -944,6 +945,42 @@ public class SubtitleTranslationServiceTests
         Assert.All(subtitles.Skip(1), subtitle => Assert.Empty(subtitle.TranslatedLines));
     }
 
+    [Fact]
+    public async Task ProcessSubtitleBatch_NoBatchCapableCandidateForLanguagePair_FallsBackToLineTranslation()
+    {
+        // Arrange - the chain holds a batch-capable provider, but it does not support the requested
+        // pair. The run has to degrade to the per-line chain instead of failing the whole file.
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        var unsupportedBatch = MockService(pair: null, _ => "unused");
+        var batchCapability = new Mock<IBatchTranslationService>();
+        var lineService = MockService(pair, _ => "hola");
+        var progress = MockProgressService();
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("batch-only", unsupportedBatch.Object, batchCapability.Object),
+                new TranslationServiceEntry("line-only", lineService.Object, null)
+            ],
+            NullLogger.Instance,
+            progress.Object);
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello") };
+
+        // Act
+        await service.ProcessSubtitleBatch(subtitles,
+            "en", "es",
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["hola"], subtitles[0].TranslatedLines);
+        Assert.Equal("line-only", Assert.Single(service.SourceSummary.Counts).Source.Provider);
+        batchCapability.Verify(batchService => batchService.TranslateBatchAsync(
+            It.IsAny<List<BatchSubtitleItem>>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     #endregion
 
     #region Chain-wide best-match resolution
@@ -960,6 +997,36 @@ public class SubtitleTranslationServiceTests
         return mock;
     }
 
+    private static Mock<ITranslationService> MockFailingService(LanguagePair pair, Exception failure)
+    {
+        var mock = new Mock<ITranslationService>();
+        mock.Setup(service => service.GetLanguagePair(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pair);
+        mock.Setup(service => service.TranslateAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(failure);
+        return mock;
+    }
+
+    /// <summary>
+    /// Progress mock complete enough for <see cref="SubtitleTranslationService.TranslateSubtitles"/>.
+    /// </summary>
+    private static Mock<IProgressService> MockProgressService()
+    {
+        var progress = new Mock<IProgressService>();
+        progress.Setup(progressService => progressService.Emit(It.IsAny<TranslationRequest>(), It.IsAny<int>()))
+            .Returns(Task.CompletedTask);
+        progress.Setup(progressService => progressService.EmitLine(
+                It.IsAny<TranslationRequest>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string?>(), It.IsAny<LanguagePair?>(), It.IsAny<string?>()))
+            .Returns(Task.CompletedTask);
+        progress.Setup(progressService => progressService.EmitLines(
+                It.IsAny<TranslationRequest>(), It.IsAny<List<TranslatedLineData>>()))
+            .Returns(Task.CompletedTask);
+        return progress;
+    }
+
     [Fact]
     public async Task TranslateSubtitleLine_PrefersExactMatchOverNeutralFallback()
     {
@@ -974,13 +1041,13 @@ public class SubtitleTranslationServiceTests
             NullLogger.Instance);
 
         // Act
-        var (translation, serviceName, pair) = await service.TranslateSubtitleLine(
+        var (translation, source, pair) = await service.TranslateSubtitleLine(
             new TranslateAbleSubtitleLine { SubtitleLine = "hi", SourceLanguage = "en", TargetLanguage = "zh-TW" },
             CancellationToken.None);
 
         // Assert
         Assert.Equal("fallback", translation);
-        Assert.Equal("fallback", serviceName);
+        Assert.Equal("fallback", source.Provider);
         Assert.Equal(MatchTier.Exact, pair.Tier);
         Assert.Equal("zh-TW", pair.Target);
     }
@@ -999,13 +1066,13 @@ public class SubtitleTranslationServiceTests
             NullLogger.Instance);
 
         // Act
-        var (translation, serviceName, _) = await service.TranslateSubtitleLine(
+        var (translation, source, _) = await service.TranslateSubtitleLine(
             new TranslateAbleSubtitleLine { SubtitleLine = "hi", SourceLanguage = "en", TargetLanguage = "zh-TW" },
             CancellationToken.None);
 
         // Assert
         Assert.Equal("primary", translation);
-        Assert.Equal("primary", serviceName);
+        Assert.Equal("primary", source.Provider);
     }
 
     [Fact]
@@ -1017,7 +1084,7 @@ public class SubtitleTranslationServiceTests
         progress.Setup(progressService => progressService.Emit(It.IsAny<TranslationRequest>(), It.IsAny<int>())).Returns(Task.CompletedTask);
         progress.Setup(progressService => progressService.EmitLine(
                 It.IsAny<TranslationRequest>(), It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<LanguagePair?>()))
+                It.IsAny<string?>(), It.IsAny<LanguagePair?>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
         var service = new SubtitleTranslationService(
             [new TranslationServiceEntry("only", only.Object, null)],
@@ -1043,7 +1110,8 @@ public class SubtitleTranslationServiceTests
         // Assert
         progress.Verify(progressService => progressService.EmitLine(
             request, 1, "hi", "ni hao", "only",
-            It.Is<LanguagePair?>(pair => pair != null && pair.Source == "en" && pair.Target == "zh" && pair.Tier == MatchTier.NeutralEquivalent)),
+            It.Is<LanguagePair?>(pair => pair != null && pair.Source == "en" && pair.Target == "zh" && pair.Tier == MatchTier.NeutralEquivalent),
+            null),
             Times.Once);
     }
 
@@ -1061,6 +1129,176 @@ public class SubtitleTranslationServiceTests
             service.TranslateSubtitleLine(
                 new TranslateAbleSubtitleLine { SubtitleLine = "hi", SourceLanguage = "en", TargetLanguage = "zh-TW" },
                 CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task TranslateSubtitles_SameProviderTwoModels_SecondModelIsUsedAndReportedAsSource()
+    {
+        // Arrange - one provider configured with two models: the first model is down, so the chain
+        // tries the provider's second candidate and the line is attributed to that second model.
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        var firstModel = MockFailingService(pair, new InvalidOperationException("model-a is down"));
+        var secondModel = MockService(pair, _ => "hola");
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("custom", firstModel.Object, null, "model-a"),
+                new TranslationServiceEntry("custom", secondModel.Object, null, "model-b")
+            ],
+            NullLogger.Instance,
+            MockProgressService().Object);
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello") };
+
+        // Act
+        await service.TranslateSubtitles(subtitles, NewRequest(),
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            contextBefore: 0,
+            contextAfter: 0,
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["hola"], subtitles[0].TranslatedLines);
+        var count = Assert.Single(service.SourceSummary.Counts);
+        Assert.Equal("custom", count.Source.Provider);
+        Assert.Equal("model-b", count.Source.Model);
+        Assert.Equal(1, count.Lines);
+    }
+
+    [Fact]
+    public async Task TranslateSubtitleLine_AuthenticationFailure_SkipsRemainingModelsOfThatProvider()
+    {
+        // Arrange - the first candidate rejects the credentials. Every model of a provider shares
+        // them, so the provider's second model must not be tried; the chain continues with openai.
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        var unauthorized = MockFailingService(pair, new TranslationAuthenticationException("bad key"));
+        var sameProviderSecondModel = MockService(pair, _ => "unused");
+        var nextProvider = MockService(pair, _ => "openai says hi");
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("custom", unauthorized.Object, null, "model-a"),
+                new TranslationServiceEntry("custom", sameProviderSecondModel.Object, null, "model-b"),
+                new TranslationServiceEntry("openai", nextProvider.Object, null)
+            ],
+            NullLogger.Instance);
+
+        // Act
+        var (translation, source, _) = await service.TranslateSubtitleLine(
+            new TranslateAbleSubtitleLine { SubtitleLine = "hi", SourceLanguage = "en", TargetLanguage = "es" },
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal("openai says hi", translation);
+        Assert.Equal("openai", source.Provider);
+        unauthorized.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+        sameProviderSecondModel.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
+        nextProvider.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TranslateSubtitleLine_ConfigurationFailure_SkipsRemainingModelsOfThatProvider()
+    {
+        // Arrange - the first candidate cannot produce a request at all. That failure affects every
+        // model of the provider, so the provider's second model must not be tried; the chain continues
+        // with the next provider.
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        var misconfigured = MockFailingService(pair, new TranslationConfigurationException("missing endpoint"));
+        var sameProviderSecondModel = MockService(pair, _ => "unused");
+        var nextProvider = MockService(pair, _ => "openai says hi");
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("custom", misconfigured.Object, null, "model-a"),
+                new TranslationServiceEntry("custom", sameProviderSecondModel.Object, null, "model-b"),
+                new TranslationServiceEntry("openai", nextProvider.Object, null)
+            ],
+            NullLogger.Instance);
+
+        // Act
+        var (translation, source, _) = await service.TranslateSubtitleLine(
+            new TranslateAbleSubtitleLine { SubtitleLine = "hi", SourceLanguage = "en", TargetLanguage = "es" },
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal("openai says hi", translation);
+        Assert.Equal("openai", source.Provider);
+        misconfigured.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+        sameProviderSecondModel.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
+        nextProvider.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
+    #region Stacked lines and source attribution
+
+    [Fact]
+    public async Task TranslateSubtitles_StackedLinesReuseCachedTranslation_AndKeepTheirSource()
+    {
+        // Arrange - two .ass layers with the same timing and text: the second is served from the
+        // translation cache, but it is still a line that was translated by the same provider.
+        var harness = CreatePerLineHarness(_ => "hola");
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello"), Subtitle(2, "hello") };
+
+        // Act
+        await harness.Service.TranslateSubtitles(subtitles, NewRequest(),
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            contextBefore: 0,
+            contextAfter: 0,
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(["hola"], subtitles[0].TranslatedLines);
+        Assert.Equal(["hola"], subtitles[1].TranslatedLines);
+        harness.TranslationServiceMock.Verify(
+            t => t.TranslateAsync("hello", "en", "es", null, null, It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        var count = Assert.Single(harness.Service.SourceSummary.Counts);
+        Assert.Equal("test", count.Source.Provider);
+        Assert.Equal(2, count.Lines);
+        Assert.Equal(2, harness.Service.AttributionByPosition.Count);
+    }
+
+    [Fact]
+    public async Task TranslateSubtitles_CountsEveryLineOncePerSource()
+    {
+        // Arrange - a mixed run has to report both sources with their own line counts.
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        var failingService = MockFailingService(pair, new InvalidOperationException("provider is down"));
+        var workingService = MockService(pair, _ => "hola");
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("custom", failingService.Object, null, "model-a"),
+                new TranslationServiceEntry("openai", workingService.Object, null)
+            ],
+            NullLogger.Instance,
+            MockProgressService().Object);
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello"), Subtitle(2, "world") };
+
+        // Act
+        await service.TranslateSubtitles(subtitles, NewRequest(),
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            contextBefore: 0,
+            contextAfter: 0,
+            CancellationToken.None);
+
+        // Assert
+        var count = Assert.Single(service.SourceSummary.Counts);
+        Assert.Equal("openai", count.Source.Provider);
+        Assert.Equal(2, count.Lines);
+        Assert.False(service.SourceSummary.IsMixed);
     }
 
     #endregion

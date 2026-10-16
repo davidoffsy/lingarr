@@ -1,10 +1,10 @@
-using System.Reflection;
 using System.Text;
 using Lingarr.Contracts.Translation;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Subtitle;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services.Subtitle;
+using Lingarr.Server.Services.Translation.Attribution;
 using SubtitleValidationOptions = Lingarr.Server.Models.SubtitleValidationOptions;
 
 namespace Lingarr.Server.Services;
@@ -361,31 +361,17 @@ public class SubtitleService : ISubtitleService
     }
     
     /// <summary>
-    /// Adds an introductory subtitle at the beginning that identifies the translation service used.
+    /// Adds an introductory subtitle at the beginning that identifies the translation source used.
     /// The intro duration is automatically adjusted to avoid overlapping with existing subtitles.
+    /// A file translated by more than one provider or model is credited to all of them.
     /// </summary>
-    /// <param name="serviceType">The translation service type (e.g., "openai", "google").</param>
+    /// <param name="sources">Providers and models that actually translated the file.</param>
     /// <param name="translatedSubtitles">The subtitle list to prepend the intro to.</param>
-    /// <param name="translationService">The service instance used to extract model name if available.</param>
-    public void AddTranslatorInfo(string serviceType, List<SubtitleItem> translatedSubtitles,
-        ITranslationService translationService)
+    public void AddTranslatorInfo(TranslationSourceSummary sources, List<SubtitleItem> translatedSubtitles)
     {
-        // Check if the service has a ModelName property
-        var serviceName = char.ToUpper(serviceType[0]) + serviceType[1..];
-
-        var modelField = translationService.GetType().GetField("_model",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-
-        if (modelField != null)
-        {
-            var modelName = modelField.GetValue(translationService)?.ToString();
-            if (!string.IsNullOrEmpty(modelName))
-            {
-                serviceName += " - " + modelName;
-            }
-        }
-
-        var introText = $"# Translated with Lingarr using {serviceName} translator #";
+        var introText = sources.IsMixed
+            ? $"# Translated with Lingarr using multiple translators ({sources.Describe()}) #"
+            : $"# Translated with Lingarr using {DescribeSingleSource(sources)} translator #";
         var introDuration = 5.0; // Default duration in seconds
 
         // Check if there are existing subtitles and if the first one starts before our intro ends
@@ -417,6 +403,23 @@ public class SubtitleService : ISubtitleService
         };
 
         translatedSubtitles.Insert(0, introSubtitle);
+    }
+
+    /// <summary>
+    /// Labels a single-source run the way earlier versions did, for example <c>Openai - gpt-4o</c> or
+    /// <c>Deepl</c> when the provider has no model.
+    /// </summary>
+    private static string DescribeSingleSource(TranslationSourceSummary sources)
+    {
+        var dominant = sources.Dominant?.Source;
+        if (dominant is null)
+        {
+            return "unknown";
+        }
+
+        var provider = dominant.Value.Provider;
+        var name = provider.Length == 0 ? provider : char.ToUpper(provider[0]) + provider[1..];
+        return string.IsNullOrWhiteSpace(dominant.Value.Model) ? name : $"{name} - {dominant.Value.Model}";
     }
 
     /// <inheritdoc />

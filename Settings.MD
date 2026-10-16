@@ -192,9 +192,24 @@ The `SOURCE_LANGUAGES` and `TARGET_LANGUAGES` variables should be provided as a 
 | `AI_PROMPT`              | The prompt template for AI-based translation services.                          |
 | `AI_USER_PROMPT`         | The user message template. Supports `{lineToTranslate}`, `{contextBefore}` and `{contextAfter}`. |
 
+#### **Custom**
+
+Your own OpenAI-compatible gateway over the non-streaming Chat Completions protocol. Independent from LocalAI: address, key, model and request template live under their own `custom_*` settings, so both providers can be used in the same translation chain without sharing any of them. Existing `localai` configurations keep working unchanged.
+
+| **Environment Variable**        | **Description**                                                                 |
+|---------------------------------|---------------------------------------------------------------------------------|
+| `CUSTOM_ENDPOINT`               | Base URL or full chat completions path. A bare base URL gets `/v1/chat/completions` appended; a URL that already ends in `/v1` gets `/chat/completions`; a full path is used as it is. Example: `http://localhost:8000/v1`. |
+| `CUSTOM_MODEL`                  | The model to use. Load the model list with **Test connection**, or type a model id when the gateway has no `/models` endpoint. |
+| `CUSTOM_API_KEY`                | Bearer token, optional. Only needed when the gateway requires authentication. Stored encrypted. |
+| `CUSTOM_CHAT_REQUEST_TEMPLATE`  | The request template for this provider, stored separately from the LocalAI and OpenAI templates. |
+| `AI_PROMPT`                     | The prompt template for AI-based translation services.                          |
+| `AI_USER_PROMPT`                | The user message template. Supports `{lineToTranslate}`, `{contextBefore}` and `{contextAfter}`. |
+
+Each of these variables also accepts the `_FILE` variant described under **Docker secrets**.
+
 #### **Proofreading**
 
-Proofreading is only available for the AI services above (OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, LocalAI), and only for a `service_type` entry that supports it. It uses two more settings, shared across all AI services the same way `AI_PROMPT` and `AI_USER_PROMPT` are. These are configured through **Settings > Services > Request Settings** in the web interface, or through their environment variables:
+Proofreading is only available for the AI services above (OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, LocalAI, Custom), and only for a `service_type` entry that supports it. It uses two more settings, shared across all AI services the same way `AI_PROMPT` and `AI_USER_PROMPT` are. These are configured through **Settings > Services > Request Settings** in the web interface, or through their environment variables:
 
 | **Setting** | **Environment Variable** | **Default** |
 |-------------|--------------------------|-------------|
@@ -205,12 +220,12 @@ See the AI services documentation for the full placeholder list.
 
 #### **AI request settings**
 
-Shared across OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, and LocalAI. Configure them under **Settings > Services > Request Settings**, or through environment variables. Do not add these rows to every provider table.
+Shared across OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, LocalAI and Custom. Configure them under **Settings > Services > Request Settings**, or through environment variables. Do not add these rows to every provider table.
 
 | **Setting** | **Environment Variable** | **Default** | **Description** |
 |-------------|--------------------------|-------------|-----------------|
 | `ai_max_tokens` | `AI_MAX_TOKENS` | `0` | Maximum tokens for one completion (thinking plus the answer). `0` (the default) omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. Not applied to LocalAI generate (Ollama `/api/generate`). |
-| `ai_thinking` | `AI_THINKING` | `auto` | Chain-of-thought control for LocalAI OpenAI-compatible chat only. `auto` (the default) sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
+| `ai_thinking` | `AI_THINKING` | `auto` | Chain-of-thought control for OpenAI-compatible chat only (LocalAI chat and Custom). `auto` (the default) sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
 
 #### **DeepL**
 
@@ -231,6 +246,12 @@ A single value is also accepted and is rewritten to an array on startup.
 ["openai","anthropic","libretranslate"]
 ```
 
+An entry may also be an object with a `provider` and an optional `model`, so several models of one provider can be tried in order before the chain moves on to the next service. The model applies to that entry only and does not change the provider's default model:
+
+```json
+[{"provider":"custom","model":"model-a"},{"provider":"custom","model":"model-b"},{"provider":"deepl"}]
+```
+
 The supported values are:
 
 | **Value**       | **Description**                                                                 |
@@ -243,6 +264,7 @@ The supported values are:
 | `mistral`       | Use Mistral's models for translations.                                          |
 | `xai`           | Use xAI's Grok models for translations.                                         |
 | `localai`       | Use a locally hosted or OpenAI-compatible AI model for translations.            |
+| `custom`        | Use your own OpenAI-compatible gateway over the Chat Completions protocol.      |
 | `deepl`         | Use the DeepL API for translations.                                             |
 | `google`        | Use Google Translate for translations.                                          |
 | `bing`          | Use Bing Translate for translations.                                            |

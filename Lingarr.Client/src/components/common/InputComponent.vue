@@ -14,7 +14,9 @@
                 :type="type == INPUT_TYPE.PASSWORD ? (showPassword ? 'text' : 'password') : type"
                 :class="inputClasses"
                 :placeholder="placeholder"
-                @input="handleInput" />
+                @input="handleInput"
+                @change="handleChange"
+                @blur="handleBlur" />
             <ValidationIcon
                 v-if="validationType"
                 :is-valid="isValid"
@@ -71,6 +73,8 @@ const emit = defineEmits<{
     (e: 'update:modelValue', value: string): void
     (e: 'update:validation', isValid: boolean): void
     (e: 'update:value', value: string): void
+    (e: 'change', value: string): void
+    (e: 'blur'): void
 }>()
 const { isValid, isInvalid, error, validate } = useValidation(props)
 
@@ -107,6 +111,18 @@ const handleInput = (event: Event) => {
     } else {
         emitValue(event)
     }
+}
+
+/**
+ * Commit signals for callers that must not store every keystroke: `change` fires on blur/enter once
+ * the value differs from the one the input was focused with, `blur` always fires when focus is lost.
+ */
+const handleChange = (event: Event) => {
+    emit('change', (event.target as HTMLInputElement).value)
+}
+
+const handleBlur = () => {
+    emit('blur')
 }
 
 const togglePassword = () => {

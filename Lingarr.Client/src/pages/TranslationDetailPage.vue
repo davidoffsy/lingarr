@@ -122,7 +122,17 @@
                             </div>
                             <div
                                 class="text-primary-content/70 flex items-center justify-between gap-2 px-4 py-2 text-xs md:col-span-2">
-                                <span class="truncate">{{ line.service ?? 'unknown' }}</span>
+                                <div class="flex min-w-0 flex-col">
+                                    <span class="truncate" :title="line.service ?? undefined">
+                                        {{ line.service ?? 'unknown' }}
+                                    </span>
+                                    <span
+                                        v-if="line.model"
+                                        class="text-primary-content/50 truncate"
+                                        :title="line.model">
+                                        {{ line.model }}
+                                    </span>
+                                </div>
                                 <div class="flex shrink-0 items-center gap-2">
                                     <button
                                         v-if="editable"
@@ -330,7 +340,8 @@ const handleLineTranslated = (line: ILineTranslated) => {
             position: line.position,
             source: line.source,
             target: line.target,
-            service: line.service ?? null
+            service: line.service ?? null,
+            model: line.model ?? null
         })
         latestPosition.value = line.position
     }
@@ -343,6 +354,9 @@ const handleLineProofread = (line: ILineProofread) => {
             target.target = line.target
             if (line.service) {
                 target.service = line.service
+            }
+            if (line.model) {
+                target.model = line.model
             }
         }
         delete proofreadState[line.position]

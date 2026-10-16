@@ -1,6 +1,7 @@
 using Lingarr.Contracts.Translation;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
+using Lingarr.Server.Services.Translation.Attribution;
 
 namespace Lingarr.Server.Interfaces.Services;
 
@@ -50,14 +51,15 @@ public interface ISubtitleService
     List<SubtitleItem> FixOverlappingSubtitles(List<SubtitleItem> subtitles);
 
     /// <summary>
-    /// Adds an introductory subtitle at the beginning that identifies the translation service used.
+    /// Adds an introductory subtitle at the beginning that identifies the translation source used.
     /// The intro duration is automatically adjusted to avoid overlapping with existing subtitles.
     /// </summary>
-    /// <param name="serviceType">The translation service type (e.g., "openai", "google").</param>
+    /// <param name="sources">
+    /// Providers and models that actually translated the file. A run that used more than one source
+    /// is named as such instead of reporting only the first configured provider.
+    /// </param>
     /// <param name="translatedSubtitles">The subtitle list to prepend the intro to.</param>
-    /// <param name="translationService">The service instance used to extract model name if available.</param>
-    void AddTranslatorInfo(string serviceType, List<SubtitleItem> translatedSubtitles,
-        ITranslationService translationService);
+    void AddTranslatorInfo(TranslationSourceSummary sources, List<SubtitleItem> translatedSubtitles);
     
     
     bool ValidateSubtitle(

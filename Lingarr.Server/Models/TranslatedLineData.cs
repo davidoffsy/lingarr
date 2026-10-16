@@ -8,5 +8,9 @@ public class TranslatedLineData
     public required string Source { get; set; }
     public required string Target { get; set; }
     public string? Service { get; set; }
+
+    /// <summary>Model that produced the line, when the provider uses one.</summary>
+    public string? Model { get; set; }
+
     public LanguagePair? Pair { get; set; }
 }

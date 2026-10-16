@@ -10,6 +10,8 @@ public class TranslationRequestLine : BaseEntity
     public required string Source { get; set; }
     public required string Target { get; set; }
     public string? Service { get; set; }
+    /// <summary>Model of <see cref="Service"/> that produced the translation, when the provider uses one.</summary>
+    public string? Model { get; set; }
     public string? MatchedSource { get; set; }
     public string? MatchedTarget { get; set; }
     public MatchTier? Tier { get; set; }

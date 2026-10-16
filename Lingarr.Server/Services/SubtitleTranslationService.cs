@@ -11,7 +11,9 @@ using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services.Subtitle;
+using Lingarr.Server.Services.Translation.Attribution;
 using Lingarr.Server.Services.Translation.Batch;
+using Lingarr.Server.Services.Translation.Chain;
 
 namespace Lingarr.Server.Services;
 
@@ -46,16 +48,22 @@ public class SubtitleTranslationService
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
+    /// <summary>
+    /// One cached translation of a stacked line (.ass layers that share timing and text). It carries
+    /// the attribution of the line the translation came from, so reused positions are credited to the
+    /// same provider and model instead of counting as untranslated.
+    /// </summary>
+    private readonly record struct CachedLine(string Translation, TranslationSource? Source, LanguagePair? Pair);
+
     private int _lastProgression = -1;
     private readonly IReadOnlyList<TranslationServiceEntry> _services;
     private readonly IProgressService? _progressService;
     private readonly ILogger _logger;
     private readonly bool _useTranslatedContext;
     private readonly bool _mergeStackedLines;
-    private readonly Dictionary<int, (string Service, LanguagePair Pair)> _translationByPosition = [];
-    private readonly HashSet<string> _loggedSkips = [];
-    private readonly HashSet<TranslationCandidate> _loggedFallbacks = [];
-    private readonly Dictionary<(string Source, string Target), IReadOnlyList<TranslationCandidate>> _candidatesByPair = [];
+    private readonly TranslationCandidateScheduler _scheduler;
+    private readonly TranslationSourceTracker _sources = new();
+    private readonly HashSet<string> _unusableProviders = [];
 
     /// <param name="services">Ordered translation service chain; the first entry is the primary, the rest are fallbacks.</param>
     /// <param name="logger">Logger for progress and fallback diagnostics.</param>
@@ -86,9 +94,39 @@ public class SubtitleTranslationService
         _logger = logger;
         _useTranslatedContext = useTranslatedContext;
         _mergeStackedLines = mergeStackedLines;
+        _scheduler = new TranslationCandidateScheduler(services, logger);
     }
 
-    private readonly record struct TranslationCandidate(TranslationServiceEntry Entry, LanguagePair Pair, int ChainIndex);
+    /// <summary>
+    /// Provider and model that produced each position translated by this instance. Positions are
+    /// recorded once per successful translation, so callers can attribute lines, statistics and the
+    /// subtitle translator tag to the source that really translated them.
+    /// </summary>
+    public IReadOnlyDictionary<int, TranslationAttribution> AttributionByPosition => _sources.ByPosition;
+
+    /// <summary>
+    /// Line counts per provider and model over everything this instance translated, including lines
+    /// that were already translated when the run started.
+    /// </summary>
+    public TranslationSourceSummary SourceSummary => _sources.Summarize();
+
+    /// <summary>Line counts per source restricted to <paramref name="positions"/>.</summary>
+    public TranslationSourceSummary SourceSummaryOf(IEnumerable<int> positions) => _sources.Summarize(positions);
+
+    /// <summary>
+    /// Pre-loads attribution for positions that an earlier run already translated, so summaries and
+    /// the subtitle translator tag describe the whole file after a resume. Positions translated by
+    /// this run overwrite their seeded attribution.
+    /// </summary>
+    public void SeedAttribution(IReadOnlyDictionary<int, TranslationAttribution> attribution)
+    {
+        ArgumentNullException.ThrowIfNull(attribution);
+
+        foreach (var (position, value) in attribution)
+        {
+            _sources.Record(position, value);
+        }
+    }
 
     /// <summary>
     /// Translates a list of subtitle items from the source language to the target language.
@@ -122,7 +160,7 @@ public class SubtitleTranslationService
         // layers). Translate each unique (Start, End, plaintext) once per
         // file and reuse the result for the rest. SRT/VTT files almost never
         // share timestamps, so this is a no-op there.
-        var translationCache = new Dictionary<string, string>();
+        var translationCache = new Dictionary<string, CachedLine>();
 
         for (var index = 0; index < totalSubtitles; index++)
         {
@@ -143,7 +181,16 @@ public class SubtitleTranslationService
                     if (!string.IsNullOrWhiteSpace(sourceLine))
                     {
                         var cacheKey = $"{subtitle.StartTime}|{subtitle.EndTime}|{sourceLine}";
-                        translationCache.TryAdd(cacheKey, string.Join(" ", subtitle.TranslatedLines));
+                        // Carry the attribution of the line the translation came from (seeded
+                        // attribution from earlier runs included), so a reused position is credited to
+                        // the provider/model that really produced it instead of counting as un-attributed.
+                        _sources.TryGet(subtitle.Position, out var cachedAttribution);
+                        translationCache.TryAdd(
+                            cacheKey,
+                            new CachedLine(
+                                string.Join(" ", subtitle.TranslatedLines),
+                                cachedAttribution.Source,
+                                cachedAttribution.Pair));
                     }
                 }
 
@@ -161,7 +208,7 @@ public class SubtitleTranslationService
                 : [string.Join(" ", contentLines)];
 
             var translatedLines = new List<string>(subtitleLines.Count);
-            string? service = null;
+            TranslationSource? source = null;
             LanguagePair? pair = null;
             foreach (var subtitleLine in subtitleLines)
             {
@@ -174,7 +221,9 @@ public class SubtitleTranslationService
                 var cacheKey = $"{subtitle.StartTime}|{subtitle.EndTime}|{subtitleLine}";
                 if (_mergeStackedLines && translationCache.TryGetValue(cacheKey, out var cachedTranslation))
                 {
-                    translatedLines.Add(cachedTranslation);
+                    translatedLines.Add(cachedTranslation.Translation);
+                    source ??= cachedTranslation.Source;
+                    pair ??= cachedTranslation.Pair;
                     continue;
                 }
 
@@ -188,10 +237,10 @@ public class SubtitleTranslationService
                 }, cancellationToken);
                 if (_mergeStackedLines)
                 {
-                    translationCache[cacheKey] = result.Translation;
+                    translationCache[cacheKey] = new CachedLine(result.Translation, result.Source, result.Pair);
                 }
                 translatedLines.Add(result.Translation);
-                service ??= result.Service;
+                source ??= result.Source;
                 pair ??= result.Pair;
             }
 
@@ -201,9 +250,9 @@ public class SubtitleTranslationService
 
             var sourceText = string.Join(" ", contentLines);
             var translatedText = string.Join(" ", subtitle.TranslatedLines);
-            if (service != null && pair != null)
+            if (source != null && pair != null)
             {
-                _translationByPosition[subtitle.Position] = (service, pair);
+                _sources.Record(subtitle.Position, new TranslationAttribution(source.Value, pair));
             }
 
             await _progressService!.EmitLine(
@@ -211,8 +260,9 @@ public class SubtitleTranslationService
                 subtitle.Position,
                 sourceText,
                 translatedText,
-                service,
-                pair);
+                service: source?.Provider,
+                pair: pair,
+                model: source?.Model);
 
             iteration++;
             await EmitProgress(translationRequest, iteration, totalSubtitles);
@@ -225,12 +275,12 @@ public class SubtitleTranslationService
     /// <summary>
     /// Translates a single subtitle line, walking configured services in best-match order and falling back on per-service failure.
     /// </summary>
-    /// <returns>The translated line, the service name that produced it, and the language pair used.</returns>
-    public async Task<(string Translation, string Service, LanguagePair Pair)> TranslateSubtitleLine(
+    /// <returns>The translated line, the provider and model that produced it, and the language pair used.</returns>
+    public async Task<(string Translation, TranslationSource Source, LanguagePair Pair)> TranslateSubtitleLine(
         TranslateAbleSubtitleLine translateAbleSubtitle,
         CancellationToken cancellationToken)
     {
-        var candidates = await GetTranslationCandidates(
+        var candidates = await _scheduler.GetCandidates(
             translateAbleSubtitle.SourceLanguage,
             translateAbleSubtitle.TargetLanguage,
             batch: false,
@@ -246,6 +296,11 @@ public class SubtitleTranslationService
         foreach (var candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (IsProviderUnusable(candidate))
+            {
+                continue;
+            }
+
             try
             {
                 var translated = await candidate.Entry.Service.TranslateAsync(
@@ -255,8 +310,20 @@ public class SubtitleTranslationService
                     translateAbleSubtitle.ContextLinesBefore,
                     translateAbleSubtitle.ContextLinesAfter,
                     cancellationToken);
-                LogFallback(candidate, translateAbleSubtitle.SourceLanguage, translateAbleSubtitle.TargetLanguage);
-                return (translated, candidate.Entry.Name, candidate.Pair);
+                _scheduler.LogFallback(candidate, translateAbleSubtitle.SourceLanguage, translateAbleSubtitle.TargetLanguage);
+                return (translated, TranslationSource.FromCandidate(candidate.Entry), candidate.Pair);
+            }
+            catch (TranslationAuthenticationException ex)
+            {
+                MarkProviderUnusable(candidate, ex,
+                    "the provider rejected the configured credentials.");
+                lastError = ex;
+            }
+            catch (TranslationConfigurationException ex)
+            {
+                MarkProviderUnusable(candidate, ex,
+                    "the candidate's settings cannot produce a request (missing endpoint, model or an unusable address).");
+                lastError = ex;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -265,71 +332,32 @@ public class SubtitleTranslationService
             catch (Exception ex)
             {
                 lastError = ex;
-                _logger.LogWarning(ex, "Translation service {Service} failed.", candidate.Entry.Name);
+                _logger.LogWarning(ex, "Translation service {Service} failed.", candidate.Entry.Describe());
             }
         }
 
         throw new TranslationException("All configured translation services failed for subtitle line.", lastError);
     }
 
+    /// <summary>
+    /// True when the candidate's provider already failed in a way that affects every model of that
+    /// provider during this run (rejected credentials, unusable configuration). Only failures that can
+    /// differ per model are retried with the provider's next candidate; the chain continues with the
+    /// other providers.
+    /// </summary>
+    private bool IsProviderUnusable(TranslationCandidate candidate) =>
+        _unusableProviders.Contains(candidate.Entry.Name);
 
-    private async Task<IReadOnlyList<TranslationCandidate>> GetTranslationCandidates(
-        string sourceLanguage,
-        string targetLanguage,
-        bool batch,
-        CancellationToken cancellationToken)
+    private void MarkProviderUnusable(TranslationCandidate candidate, Exception failure, string reason)
     {
-        if (_candidatesByPair.TryGetValue((sourceLanguage, targetLanguage), out var cached))
+        if (_unusableProviders.Add(candidate.Entry.Name))
         {
-            return cached;
+            _logger.LogWarning(
+                failure,
+                "Skipping the remaining {Provider} candidates: {Reason}",
+                candidate.Entry.Describe(),
+                reason);
         }
-
-        var candidates = new List<TranslationCandidate>(_services.Count);
-        for (var index = 0; index < _services.Count; index++)
-        {
-            var entry = _services[index];
-            var pair = await entry.Service.GetLanguagePair(sourceLanguage, targetLanguage, cancellationToken);
-            if (pair is null)
-            {
-                if (_loggedSkips.Add(entry.Name))
-                {
-                    _logger.LogInformation(
-                        "Skipping {Kind}translation service {Service}: no support for {Source}->{Target}.",
-                        batch ? "batch " : string.Empty, entry.Name, sourceLanguage, targetLanguage);
-                }
-                continue;
-            }
-            candidates.Add(new TranslationCandidate(entry, pair, index));
-        }
-
-        var sorted = candidates
-            .OrderBy(candidate => candidate.Pair.Tier)
-            .ThenBy(candidate => candidate.ChainIndex)
-            .ToList();
-
-        _candidatesByPair[(sourceLanguage, targetLanguage)] = sorted;
-        return sorted;
-    }
-
-    private void LogFallback(TranslationCandidate candidate, string requestedSource, string requestedTarget)
-    {
-        if (candidate.Pair.Tier == MatchTier.Exact)
-        {
-            return;
-        }
-        if (!_loggedFallbacks.Add(candidate))
-        {
-            return;
-        }
-
-        _logger.LogInformation(
-            "Translation service {Service} matched {RequestedSource}->{RequestedTarget} as {MatchedSource}->{MatchedTarget} ({Tier}).",
-            candidate.Entry.Name,
-            requestedSource,
-            requestedTarget,
-            candidate.Pair.Source,
-            candidate.Pair.Target,
-            candidate.Pair.Tier);
     }
 
     /// <summary>
@@ -415,24 +443,37 @@ public class SubtitleTranslationService
             return [];
         }
 
-        if (!_services.Any(service => service.BatchService is not null))
-        {
-            throw new TranslationException("No batch-capable translation services are configured.");
-        }
-
-        var candidates = await GetTranslationCandidates(sourceLanguage, targetLanguage, batch: true, cancellationToken);
+        var candidates = await _scheduler.GetCandidates(sourceLanguage, targetLanguage, batch: true, cancellationToken);
         var capableCandidates = candidates.Where(candidate => candidate.Entry.BatchService is not null).ToList();
 
         if (capableCandidates.Count == 0)
         {
-            throw new TranslationException(
-                $"All configured batch translation services were skipped, no service supports {sourceLanguage}->{targetLanguage}.");
+            // Batch translation was requested but no batch-capable candidate supports this language
+            // pair. Degrade to the per-line chain (which still honours the configured order) instead of
+            // failing the whole file, because the per-line candidates may well support the pair.
+            _logger.LogWarning(
+                "No batch-capable translation candidate supports {Source}->{Target}; falling back to line translation.",
+                sourceLanguage,
+                targetLanguage);
+            await TranslatePendingLinesAsync(
+                toTranslate,
+                sourceLanguage,
+                targetLanguage,
+                stripSubtitleFormatting,
+                preserveLineBreaks,
+                cancellationToken);
+            return toTranslate;
         }
 
         Exception? lastError = null;
         foreach (var candidate in capableCandidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (IsProviderUnusable(candidate))
+            {
+                continue;
+            }
+
             try
             {
                 await RunBatch(
@@ -441,8 +482,20 @@ public class SubtitleTranslationService
                     stripSubtitleFormatting,
                     preserveLineBreaks,
                     cancellationToken);
-                LogFallback(candidate, sourceLanguage, targetLanguage);
+                _scheduler.LogFallback(candidate, sourceLanguage, targetLanguage);
                 return toTranslate;
+            }
+            catch (TranslationAuthenticationException ex)
+            {
+                MarkProviderUnusable(candidate, ex,
+                    "the provider rejected the configured credentials.");
+                lastError = ex;
+            }
+            catch (TranslationConfigurationException ex)
+            {
+                MarkProviderUnusable(candidate, ex,
+                    "the candidate's settings cannot produce a request (missing endpoint, model or an unusable address).");
+                lastError = ex;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -451,11 +504,67 @@ public class SubtitleTranslationService
             catch (Exception ex)
             {
                 lastError = ex;
-                _logger.LogWarning(ex, "Batch translation service {Service} failed.", candidate.Entry.Name);
+                _logger.LogWarning(ex, "Batch translation service {Service} failed.", candidate.Entry.Describe());
             }
         }
 
         throw new TranslationException("All configured batch translation services failed.", lastError);
+    }
+
+    /// <summary>
+    /// Translates the pending subtitles through the per-line chain and records their attribution.
+    /// Used when batch translation was requested but no batch-capable candidate supports the language
+    /// pair, so the request degrades to line translation instead of failing.
+    /// </summary>
+    private async Task TranslatePendingLinesAsync(
+        List<SubtitleItem> toTranslate,
+        string sourceLanguage,
+        string targetLanguage,
+        bool stripSubtitleFormatting,
+        bool preserveLineBreaks,
+        CancellationToken cancellationToken)
+    {
+        foreach (var subtitle in toTranslate.Where(subtitle => subtitle.TranslatedLines.Count == 0))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var contentLines = stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines;
+            var subtitleLines = preserveLineBreaks && contentLines.Count > 1
+                ? contentLines
+                : [string.Join(" ", contentLines)];
+
+            var translatedLines = new List<string>(subtitleLines.Count);
+            TranslationSource? source = null;
+            LanguagePair? pair = null;
+            foreach (var subtitleLine in subtitleLines)
+            {
+                if (string.IsNullOrWhiteSpace(subtitleLine))
+                {
+                    translatedLines.Add(subtitleLine);
+                    continue;
+                }
+
+                var result = await TranslateSubtitleLine(new TranslateAbleSubtitleLine
+                {
+                    SubtitleLine = subtitleLine,
+                    SourceLanguage = sourceLanguage,
+                    TargetLanguage = targetLanguage
+                }, cancellationToken);
+                translatedLines.Add(result.Translation);
+                source ??= result.Source;
+                pair ??= result.Pair;
+            }
+
+            subtitle.TranslatedLines = translatedLines.Count > 1
+                ? translatedLines
+                : ToSubtitleLines(translatedLines[0], contentLines.Count, preserveLineBreaks,
+                    stripSubtitleFormatting, subtitle.Position);
+
+            if (source != null && pair != null)
+            {
+                _sources.Record(subtitle.Position, new TranslationAttribution(source.Value, pair));
+            }
+        }
     }
 
     private async Task RunBatch(
@@ -519,7 +628,11 @@ public class SubtitleTranslationService
                         preserveLineBreaks,
                         stripSubtitleFormatting,
                         subtitle.Position);
-                    _translationByPosition[subtitle.Position] = (candidate.Entry.Name, candidate.Pair);
+                    _sources.Record(
+                        subtitle.Position,
+                        new TranslationAttribution(
+                            TranslationSource.FromCandidate(candidate.Entry),
+                            candidate.Pair));
                     continue;
                 }
 
@@ -638,14 +751,15 @@ public class SubtitleTranslationService
 
         var lineData = subtitles.Select(subtitle =>
         {
-            _translationByPosition.TryGetValue(subtitle.Position, out var entry);
+            _sources.TryGet(subtitle.Position, out var attribution);
             return new TranslatedLineData
             {
                 Position = subtitle.Position,
                 Source = string.Join(" ", stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines),
                 Target = string.Join(" ", subtitle.TranslatedLines),
-                Service = entry.Service,
-                Pair = entry.Pair
+                Service = attribution == default ? null : attribution.Source.Provider,
+                Model = attribution == default ? null : attribution.Source.Model,
+                Pair = attribution.Pair
             };
         }).ToList();
         await _progressService!.EmitLines(translationRequest, lineData);

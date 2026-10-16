@@ -44,6 +44,10 @@ public class StartupServiceTests : IDisposable
         ("LOCAL_AI_API_KEY", SettingKeys.Translation.LocalAi.ApiKey),
         ("LOCAL_AI_ENDPOINT", SettingKeys.Translation.LocalAi.Endpoint),
         ("LOCAL_AI_PROTOCOL", SettingKeys.Translation.LocalAi.Protocol),
+        ("CUSTOM_ENDPOINT", SettingKeys.Translation.Custom.Endpoint),
+        ("CUSTOM_MODEL", SettingKeys.Translation.Custom.Model),
+        ("CUSTOM_API_KEY", SettingKeys.Translation.Custom.ApiKey),
+        ("CUSTOM_CHAT_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.ChatRequestTemplate),
         ("GEMINI_MODEL", SettingKeys.Translation.Gemini.Model),
         ("GEMINI_API_KEY", SettingKeys.Translation.Gemini.ApiKey),
         ("DEEPSEEK_MODEL", SettingKeys.Translation.DeepSeek.Model),
@@ -56,6 +60,15 @@ public class StartupServiceTests : IDisposable
         ("AUTH_ENABLED", SettingKeys.Authentication.AuthEnabled),
         ("TELEMETRY_ENABLED", SettingKeys.Telemetry.TelemetryEnabled)
     };
+
+    private const string ObjectArrayServiceType = "[{\"provider\":\"custom\",\"model\":\"model-a\"}]";
+
+    /// <summary>
+    /// A request template with placeholders: the environment mapping must store it verbatim, rendering
+    /// happens per request.
+    /// </summary>
+    private const string CustomRequestTemplate =
+        "{\"model\":\"{model}\",\"messages\":[{\"role\":\"user\",\"content\":\"{lineToTranslate}\"}]}";
 
     private readonly string _tempDir;
 
@@ -123,8 +136,113 @@ public class StartupServiceTests : IDisposable
         // Act
         await startupService.StartAsync(CancellationToken.None);
 
-        // Assert: a legacy single-value env var is wrapped into a one-element JSON array.
-        Assert.Equal("[\"openai\"]", await GetSettingValue(serviceProvider, SettingKeys.Translation.ServiceType));
+        // Assert: a legacy single-value env var is promoted to the canonical one-candidate chain.
+        Assert.Equal(
+            "[{\"provider\":\"openai\"}]",
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.ServiceType));
+    }
+
+    [Fact]
+    public async Task StartAsync_ServiceTypeSeededAsLegacySingleValue_PromotesRowToJsonArray()
+    {
+        // Arrange: only the database row carries the value (no SERVICE_TYPE environment variable), so the
+        // row is handled by the NormaliseServiceType database path.
+        ClearServiceTypeEnvironment();
+        var serviceProvider = BuildProvider();
+        await SeedServiceTypeAsync(serviceProvider, "openai");
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        // Act
+        await startupService.StartAsync(CancellationToken.None);
+
+        // Assert: legacy single-value rows are promoted to the canonical chain form on startup.
+        Assert.Equal(
+            "[{\"provider\":\"openai\"}]",
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.ServiceType));
+    }
+
+    [Fact]
+    public async Task StartAsync_ServiceTypeSeededAsJsonArray_IsLeftUnchanged()
+    {
+        // Arrange
+        ClearServiceTypeEnvironment();
+        var serviceProvider = BuildProvider();
+        await SeedServiceTypeAsync(serviceProvider, "[\"openai\",\"deepl\"]");
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        // Act
+        await startupService.StartAsync(CancellationToken.None);
+
+        // Assert: a value that already looks like an array is neither re-parsed, re-serialised nor
+        // validated (the early return on the '[' prefix keeps the configured order untouched).
+        Assert.Equal(
+            "[\"openai\",\"deepl\"]",
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.ServiceType));
+    }
+
+    [Fact]
+    public async Task StartAsync_ServiceTypeSeededAsEmpty_IsLeftUnchanged()
+    {
+        // Arrange
+        ClearServiceTypeEnvironment();
+        var serviceProvider = BuildProvider();
+        await SeedServiceTypeAsync(serviceProvider, string.Empty);
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        // Act
+        await startupService.StartAsync(CancellationToken.None);
+
+        // Assert: IsNullOrEmpty makes NormaliseServiceType return early, so the row keeps its empty value
+        // instead of being replaced by the default provider.
+        Assert.Equal(string.Empty, await GetSettingValue(serviceProvider, SettingKeys.Translation.ServiceType));
+    }
+
+    [Fact]
+    public async Task StartAsync_ObjectArrayServiceType_IsLeftAsConfigured()
+    {
+        // Arrange
+        ClearServiceTypeEnvironment();
+        var serviceProvider = BuildProvider();
+        await SeedServiceTypeAsync(serviceProvider, ObjectArrayServiceType);
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        // Act
+        await startupService.StartAsync(CancellationToken.None);
+
+        // Assert: the database path leaves any '['-prefixed value untouched, and the value it leaves
+        // behind is a readable chain - TranslationChainResolver (used by every read entry point) reads
+        // the object form with its per-candidate models, so no historical row has to be rewritten.
+        Assert.Equal(
+            ObjectArrayServiceType,
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.ServiceType));
+    }
+
+    [Fact]
+    public async Task ApplySettingsFromEnvironment_ObjectArrayServiceType_IsPreserved()
+    {
+        // Arrange: a valid new-format chain supplied through SERVICE_TYPE.
+        ClearServiceTypeEnvironment();
+        Environment.SetEnvironmentVariable("SERVICE_TYPE", ObjectArrayServiceType);
+        var serviceProvider = BuildProvider();
+        await SeedServiceTypeAsync(serviceProvider, "[\"openai\"]");
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        try
+        {
+            // Act
+            await startupService.StartAsync(CancellationToken.None);
+
+            // Assert: the environment path normalises through the Chain parser/serializer, so a
+            // legitimate object-array chain survives with its models instead of being folded to the
+            // default provider.
+            Assert.Equal(
+                ObjectArrayServiceType,
+                await GetSettingValue(serviceProvider, SettingKeys.Translation.ServiceType));
+        }
+        finally
+        {
+            ClearServiceTypeEnvironment();
+        }
     }
 
     [Fact]
@@ -215,6 +333,95 @@ public class StartupServiceTests : IDisposable
 
         // Assert
         Assert.Equal("fallback-env-value", await GetSettingValue(serviceProvider, settingKey));
+    }
+
+    [Fact]
+    public async Task ApplySettingsFromEnvironment_CustomVariables_PopulateCustomKeysOnly()
+    {
+        // Arrange: Custom is an independent provider, so its variables must land on the custom_* rows
+        // and leave every local_ai_* row untouched - a deployment may configure both providers at once.
+        Environment.SetEnvironmentVariable("CUSTOM_ENDPOINT", "http://gateway:8000/v1");
+        Environment.SetEnvironmentVariable("CUSTOM_MODEL", "model-a");
+        Environment.SetEnvironmentVariable("CUSTOM_API_KEY", "custom-key");
+        Environment.SetEnvironmentVariable("CUSTOM_CHAT_REQUEST_TEMPLATE", CustomRequestTemplate);
+
+        var serviceProvider = BuildProvider();
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        // Act
+        await startupService.StartAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Equal(
+            "http://gateway:8000/v1",
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.Endpoint));
+        Assert.Equal("model-a", await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.Model));
+        Assert.Equal("custom-key", await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.ApiKey));
+        Assert.Equal(
+            CustomRequestTemplate,
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.ChatRequestTemplate));
+
+        foreach (var localAiKey in EnvMap
+                     .Where(entry => entry.SettingKey.StartsWith("local_ai", StringComparison.Ordinal))
+                     .Select(entry => entry.SettingKey))
+        {
+            Assert.Equal(string.Empty, await GetSettingValue(serviceProvider, localAiKey));
+        }
+    }
+
+    [Fact]
+    public async Task ApplySettingsFromEnvironment_CustomApiKeyFile_IsPreferredAndTrimmed()
+    {
+        // Arrange: CUSTOM_API_KEY is a Docker-secret style value, so the _FILE variant wins over the
+        // direct variable and the trailing newline of the file must not end up in the stored key.
+        var path = Path.Combine(_tempDir, "custom_api_key");
+        await File.WriteAllTextAsync(path, "from-file-key\n");
+        Environment.SetEnvironmentVariable("CUSTOM_API_KEY_FILE", path);
+        Environment.SetEnvironmentVariable("CUSTOM_API_KEY", "from-env-key");
+
+        var serviceProvider = BuildProvider();
+        var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
+
+        // Act
+        await startupService.StartAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Equal(
+            "from-file-key",
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.ApiKey));
+    }
+
+    /// <summary>
+    /// service_type is not part of <see cref="EnvMap"/>, so the environment variables that feed it are
+    /// cleared explicitly: the database-path baselines must run without a SERVICE_TYPE override.
+    /// </summary>
+    private static void ClearServiceTypeEnvironment()
+    {
+        Environment.SetEnvironmentVariable("SERVICE_TYPE", null);
+        Environment.SetEnvironmentVariable("SERVICE_TYPE_FILE", null);
+    }
+
+    /// <summary>
+    /// Seeds (or updates) the service_type row. BuildProvider does not create this key, and updating an
+    /// existing row is preferred over adding a duplicate.
+    /// </summary>
+    private static async Task SeedServiceTypeAsync(IServiceProvider serviceProvider, string value)
+    {
+        await using var scope = serviceProvider.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<LingarrDbContext>();
+        var setting = await dbContext.Settings
+            .FirstOrDefaultAsync(s => s.Key == SettingKeys.Translation.ServiceType);
+
+        if (setting is null)
+        {
+            dbContext.Settings.Add(new Setting { Key = SettingKeys.Translation.ServiceType, Value = value });
+        }
+        else
+        {
+            setting.Value = value;
+        }
+
+        await dbContext.SaveChangesAsync();
     }
 
     private static void ClearEnv()

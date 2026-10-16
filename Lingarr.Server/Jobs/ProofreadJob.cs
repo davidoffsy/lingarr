@@ -10,6 +10,8 @@ using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.Attribution;
+using Lingarr.Server.Services.Translation.Chain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Extensions;
 
@@ -81,13 +83,15 @@ public class ProofreadJob
                 SettingKeys.Translation.StripSubtitleFormatting
             ]);
             var stripSubtitleFormatting = settings[SettingKeys.Translation.StripSubtitleFormatting] == "true";
-            var serviceNames = TranslationServices.Parse(settings[SettingKeys.Translation.ServiceType]);
-            var services = _translationServiceFactory.CreateTranslationServices(serviceNames);
-            var proofreadEntry = services.FirstOrDefault(entry => entry.Service is IProofreadService);
-            if (proofreadEntry.Service is not IProofreadService proofreadService)
+            var chainEntries = TranslationChainResolver
+                .Resolve(settings[SettingKeys.Translation.ServiceType], _logger)
+                .Entries;
+            var proofreadCandidates = ProofreadCandidateRunner.Candidates(
+                _translationServiceFactory.CreateTranslationServices(chainEntries));
+            if (proofreadCandidates.Count == 0)
             {
                 throw new TranslationException(
-                    $"No configured translation service supports proofreading: [{string.Join(", ", serviceNames)}]");
+                    $"No configured translation service supports proofreading: [{TranslationChainEntry.DescribeAll(chainEntries)}]");
             }
 
             _logger.LogInformation("ProofreadJob started for subtitle: |Green|{filePath}|/Green|",
@@ -118,25 +122,32 @@ public class ProofreadJob
 
                     if (!string.IsNullOrWhiteSpace(sourceText) && !string.IsNullOrWhiteSpace(translatedText))
                     {
-                        var proofread = await proofreadService.ProofreadAsync(
+                        var proofread = await ProofreadCandidateRunner.ProofreadAsync(
+                            proofreadCandidates,
                             sourceText,
                             translatedText,
                             request.SourceLanguage,
                             request.TargetLanguage,
+                            _logger,
                             cancellationToken);
 
-                        if (!string.IsNullOrWhiteSpace(proofread)
-                            && !string.Equals(proofread.Trim(), translatedText.Trim(), StringComparison.Ordinal))
+                        if (proofread is { } revisedLine
+                            && !string.Equals(revisedLine.Revision.Trim(), translatedText.Trim(), StringComparison.Ordinal))
                         {
-                            subtitle.TranslatedLines = [proofread];
+                            subtitle.TranslatedLines = [revisedLine.Revision];
                             revised++;
 
+                            // Provider and model are stored separately (the model column holds the model),
+                            // because the stored service is reused verbatim as the statistics provider key
+                            // and in the subtitle translator tag.
+                            var source = TranslationSource.FromCandidate(revisedLine.Entry);
                             await _progressService.EmitProofreadLine(
                                 request,
                                 subtitle.Position,
                                 sourceText,
-                                proofread,
-                                proofreadEntry.Name);
+                                revisedLine.Revision,
+                                source.Provider,
+                                source.Model);
                         }
                     }
                 }

@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Models;
@@ -8,15 +7,18 @@ using Lingarr.Core.Configuration;
 using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models.Integrations.Translation;
+using Lingarr.Server.Services.Translation.Batch;
 using Lingarr.Server.Services.Translation.Base;
 using Lingarr.Server.Services.Translation.LocalAi;
+using Lingarr.Server.Services.Translation.OpenAiCompatible;
 
 namespace Lingarr.Server.Services.Translation;
 
-public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService
+public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService, IModelOverridable
 {
     private readonly HttpClient _httpClient;
     private readonly IRequestTemplateService _requestTemplateService;
+    private readonly OpenAiChatCompletionsClient _chatClient;
     private string? _model;
     private string? _endpoint;
     private string? _apiKey;
@@ -32,10 +34,14 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     /// <inheritdoc />
     public override string? ModelName => _model;
 
+    /// <inheritdoc />
+    public void OverrideModel(string model) => SetModelOverride(model);
+
     // retry settings
     private int _maxRetries;
     private TimeSpan _retryDelay;
     private int _retryDelayMultiplier;
+    private TimeSpan _requestTimeout;
 
     public LocalAiService(
         ISettingService settings,
@@ -47,6 +53,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     {
         _httpClient = httpClient;
         _requestTemplateService = requestTemplateService;
+        _chatClient = new OpenAiChatCompletionsClient(
+            httpClient,
+            requestTemplateService,
+            logger,
+            "LocalAI",
+            _sessionId);
     }
 
     /// <summary>
@@ -84,7 +96,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 SettingKeys.Translation.RetryDelayMultiplier,
                 SettingKeys.Translation.LanguageCodeFormat
             ]);
-            _model = settings[SettingKeys.Translation.LocalAi.Model];
+            _model = ResolveModel(settings[SettingKeys.Translation.LocalAi.Model]);
             _endpoint = settings[SettingKeys.Translation.LocalAi.Endpoint];
             _chatRequestTemplate = !string.IsNullOrEmpty(settings[SettingKeys.Translation.LocalAi.ChatRequestTemplate])
                 ? settings[SettingKeys.Translation.LocalAi.ChatRequestTemplate]
@@ -95,7 +107,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
             if (string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_endpoint))
             {
-                throw new InvalidOperationException("Local AI service requires both endpoint address and model name to be configured in settings.");
+                // Configuration failures are provider-wide: the chain skips the provider's remaining
+                // candidates instead of repeating the same broken request for every subtitle line.
+                throw new TranslationConfigurationException(
+                    "Local AI service requires both endpoint address and model name to be configured in settings.");
             }
 
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);
@@ -112,13 +127,11 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             _endpoint = resolved.Url;
             _isChatEndpoint = resolved.IsChat;
 
-            var requestTimeout = int.TryParse(settings[SettingKeys.Translation.RequestTimeout],
+            var requestTimeoutMinutes = int.TryParse(settings[SettingKeys.Translation.RequestTimeout],
                 out var timeOut)
                 ? timeOut
                 : 5;
-            _httpClient.Timeout = TimeSpan.FromMinutes(requestTimeout);
-            _httpClient.DefaultRequestHeaders.Accept.Clear();
-            _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
+            _requestTimeout = TimeSpan.FromMinutes(requestTimeoutMinutes);
 
             var apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.LocalAi.ApiKey);
             _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
@@ -159,15 +172,14 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         await InitializeAsync(sourceLanguage, targetLanguage);
 
         var replacements = GetReplacements(_model!, text, contextLinesBefore, contextLinesAfter);
-        using var retry = new CancellationTokenSource();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retry.Token);
 
         var delay = _retryDelay;
         for (var attempt = 1; attempt <= _maxRetries; attempt++)
         {
             try
             {
-                return await CompleteWithLocalAiApi(replacements, retry.Token);
+                using var requestTimeout = CreateRequestTimeout(cancellationToken);
+                return await CompleteWithLocalAiApi(replacements, requestTimeout.Token);
             }
             catch (TranslationResponseException ex)
             {
@@ -177,7 +189,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                     throw new TranslationException("Too many requests. Retry limit reached.", ex);
                 }
 
-                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
@@ -213,15 +225,14 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         await InitializeAsync(sourceLanguage, targetLanguage);
 
         var replacements = GetProofreadReplacements(_model!, sourceText, translatedText);
-        using var retry = new CancellationTokenSource();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retry.Token);
 
         var delay = _retryDelay;
         for (var attempt = 1; attempt <= _maxRetries; attempt++)
         {
             try
             {
-                return await CompleteWithLocalAiApi(replacements, linked.Token);
+                using var requestTimeout = CreateRequestTimeout(cancellationToken);
+                return await CompleteWithLocalAiApi(replacements, requestTimeout.Token);
             }
             catch (TranslationResponseException ex)
             {
@@ -231,7 +242,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                     throw new TranslationException("Too many requests. Retry limit reached.", ex);
                 }
 
-                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
@@ -267,19 +278,20 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
     private async Task<HttpResponseMessage> PostJsonAsync(string jsonBody, CancellationToken cancellationToken)
     {
-        using var request = LocalAiHttp.CreateJsonPost(_endpoint!, jsonBody, _apiKey, _sessionId);
+        using var request = OpenAiCompatibleHttp.CreateJsonPost(_endpoint!, jsonBody, _apiKey, _sessionId);
         return await _httpClient.SendAsync(request, cancellationToken);
     }
 
     /// <summary>
-    /// Posts an OpenAI-compatible chat body. Max tokens and thinking are injected
-    /// only when the user set them; nothing is probed or remembered after a 400.
+    /// Per-request cancellation token: the caller's token combined with the configured request
+    /// timeout. The injected <see cref="HttpClient"/> is shared and never mutated, so the same
+    /// instance can serve several providers with different timeouts.
     /// </summary>
-    private async Task<HttpResponseMessage> PostChatRequestAsync(string bodyJson, CancellationToken cancellationToken)
+    private CancellationTokenSource CreateRequestTimeout(CancellationToken cancellationToken)
     {
-        var withTokens = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
-        var requestJson = AiThinking.Apply(_requestTemplateService, withTokens, _aiThinking);
-        return await PostJsonAsync(requestJson, cancellationToken);
+        var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_requestTimeout);
+        return timeout;
     }
 
     /// <summary>
@@ -301,30 +313,28 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     {
         await InitializeAsync(sourceLanguage, targetLanguage);
 
-        using var retry = new CancellationTokenSource();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retry.Token);
-        
         var delay = _retryDelay;
         for (var attempt = 1; attempt <= _maxRetries; attempt++)
         {
             try
             {
-                return await TranslateBatchWithLocalAiApi(subtitleBatch, linked.Token);
+                using var requestTimeout = CreateRequestTimeout(cancellationToken);
+                return await TranslateBatchWithLocalAiApi(subtitleBatch, requestTimeout.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
-                    _logger.LogError(ex, "Max retries exhausted ({StatusCode}) for batch translation", ex.StatusCode);
-                    throw new TranslationException($"Retry limit reached after {ex.StatusCode}.", ex);
+                    _logger.LogError(ex, "Max retries exhausted for batch translation after a retryable error");
+                    throw new TranslationException("Retry limit reached after repeated retryable errors.", ex);
                 }
 
-                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
-                    "{ServiceName} received {StatusCode}. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
-                    "LocalAI", ex.StatusCode, delay, attempt, _maxRetries);
+                    "{ServiceName} received a retryable error. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "LocalAI", delay, attempt, _maxRetries);
             }
             catch (TranslationParseException ex)
             {
@@ -338,8 +348,14 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                     "{ServiceName} returned an unparsable response. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
                     "LocalAI", delay, attempt, _maxRetries);
 
-                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
+            }
+            catch (TranslationException)
+            {
+                // Keep the classification (rejected credentials, unusable configuration) so the
+                // translation chain can skip the provider instead of wrapping it into a generic failure.
+                throw;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -364,174 +380,15 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             return await TranslateBatchWithGenerateApi(subtitleBatch, cancellationToken);
         }
 
-        // Try structured output first (OpenAI-compatible format)
-        try
-        {
-            return await TranslateBatchWithStructuredOutput(subtitleBatch, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Structured output failed, falling back to JSON parsing");
-            return await TranslateBatchWithJsonParsing(subtitleBatch, cancellationToken);
-        }
-    }
-
-    private async Task<Dictionary<int, string>> TranslateBatchWithStructuredOutput(
-        List<BatchSubtitleItem> subtitleBatch,
-        CancellationToken cancellationToken)
-    {
-        var responseFormat = new
-        {
-            type = "json_schema",
-            json_schema = new
-            {
-                name = "batch_translation_response",
-                strict = true,
-                schema = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        translations = new
-                        {
-                            type = "array",
-                            items = new
-                            {
-                                type = "object",
-                                properties = new
-                                {
-                                    position = new
-                                    {
-                                        type = "integer",
-                                        description = "Position number of the subtitle item"
-                                    },
-                                    line = new
-                                    {
-                                        type = "string",
-                                        description = "Translated subtitle text"
-                                    }
-                                },
-                                required = new[] { "position", "line" },
-                                additionalProperties = false
-                            }
-                        }
-                    },
-                    required = new[] { "translations" },
-                    additionalProperties = false
-                }
-            }
-        };
-
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
-        var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
-        {
-            ["response_format"] = responseFormat
-        });
-
-        var response = await PostChatRequestAsync(bodyJson, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "LocalAI structured output batch request failed with status {StatusCode}: {ResponseContent}",
-                response.StatusCode, 
-                responseContent);
-            throw new TranslationException(
-                $"LocalAI structured output batch request failed with status {response.StatusCode}: {responseContent}");
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        var chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
-        if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
-        {
-            throw new TranslationException("No completion choices returned from LocalAI");
-        }
-
-        var translatedJson = chatResponse.Choices[0].Message.Content;
-
-        try
-        {
-            // Parse the wrapper object first, extract the translations array
-            var responseWrapper = JsonSerializer.Deserialize<JsonElement>(translatedJson);
-            if (!responseWrapper.TryGetProperty("translations", out var translationsElement))
-            {
-                throw new TranslationParseException("Response does not contain 'translations' property");
-            }
-
-            var translatedItems =
-                JsonSerializer.Deserialize<List<StructuredBatchResponse>>(translationsElement.GetRawText());
-
-            if (translatedItems == null)
-            {
-                throw new TranslationParseException("Failed to deserialize translated subtitles");
-            }
-
-            return MergeByPosition(translatedItems);
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "Failed to parse structured JSON response: {Json}", translatedJson);
-            throw new TranslationParseException("Failed to parse structured translated subtitles", ex);
-        }
-    }
-
-    private async Task<Dictionary<int, string>> TranslateBatchWithJsonParsing(
-        List<BatchSubtitleItem> subtitleBatch,
-        CancellationToken cancellationToken)
-    {
-        var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
-        var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-
-        var response = await PostChatRequestAsync(bodyJson, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "LocalAI JSON parsing batch request failed with status {StatusCode}: {ResponseContent}",
-                response.StatusCode, 
-                responseContent);
-            throw new TranslationException(
-                $"LocalAI JSON parsing batch request failed with status {response.StatusCode}: {responseContent}");
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        var chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
-
-        if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
-        {
-            throw new TranslationException("No completion choices returned from LocalAI");
-        }
-
-        // Try to extract JSON
-        var translatedJson = chatResponse.Choices[0].Message.Content;
-        var jsonStart = translatedJson.IndexOf('[');
-        var jsonEnd = translatedJson.LastIndexOf(']');
-        if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart)
-        {
-            translatedJson = translatedJson.Substring(jsonStart, jsonEnd - jsonStart + 1);
-        }
-
-        try
-        {
-            var translatedItems = JsonSerializer.Deserialize<List<StructuredBatchResponse>>(translatedJson,
-                new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                });
-
-            if (translatedItems == null)
-            {
-                throw new TranslationParseException("Failed to deserialize translated subtitles from JSON parsing");
-            }
-
-            return MergeByPosition(translatedItems);
-        }
-        catch (JsonException ex)
-        {
-            _logger.LogError(ex, "Failed to parse JSON response: {Json}", translatedJson);
-            throw new TranslationParseException("Failed to parse JSON translated subtitles", ex);
-        }
+        return await _chatClient.CompleteBatchAsync(
+            _endpoint!,
+            _apiKey,
+            _chatRequestTemplate!,
+            replacements,
+            _aiThinking,
+            _maxTokens,
+            cancellationToken);
     }
 
     private async Task<Dictionary<int, string>> TranslateBatchWithGenerateApi(
@@ -554,7 +411,9 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             _logger.LogError(
                 "LocalAI generate API batch request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode, responseContent);
-            throw new TranslationException(
+            throw HttpFailure.FromResponse(
+                "LocalAI",
+                response,
                 $"LocalAI generate API batch request failed with status {response.StatusCode}: {responseContent}");
         }
 
@@ -586,7 +445,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 throw new TranslationParseException("Failed to deserialize translated subtitles from generate API");
             }
 
-            return MergeByPosition(translatedItems);
+            return BatchResponseMerger.MergeByPosition(translatedItems);
         }
         catch (JsonException ex)
         {
@@ -607,7 +466,9 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             _logger.LogError(
                 "LocalAI generate API request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode, responseContent);
-            throw new TranslationException(
+            throw HttpFailure.FromResponse(
+                "LocalAI",
+                response,
                 $"LocalAI generate API request failed with status {response.StatusCode}: {responseContent}");
         }
 
@@ -626,35 +487,14 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         Dictionary<string, string> replacements,
         CancellationToken cancellationToken)
     {
-        var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-        var response = await PostChatRequestAsync(bodyJson, cancellationToken);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "LocalAI chat API request to {Endpoint} failed with status {StatusCode}: {ResponseContent}",
-                _endpoint, 
-                response.StatusCode, 
-                responseContent);
-            var error = $"LocalAI chat API request failed with status {response.StatusCode}: {responseContent}";
-            if (LocalAiHttp.IsTransient(response.StatusCode))
-            {
-                throw new TranslationResponseException(error);
-            }
-
-            throw new TranslationException(error);
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        var chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
-
-        if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
-        {
-            throw new TranslationResponseException("Invalid or empty response from chat API.");
-        }
-
-        return chatResponse.Choices[0].Message.Content;
+        return await _chatClient.CompleteAsync(
+            _endpoint!,
+            _apiKey,
+            _chatRequestTemplate!,
+            replacements,
+            _aiThinking,
+            _maxTokens,
+            cancellationToken);
     }
 
     /// <inheritdoc />

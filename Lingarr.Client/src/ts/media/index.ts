@@ -64,6 +64,7 @@ export interface ISubtitleLineComparison {
     source: string
     target: string
     service?: string | null
+    model?: string | null
 }
 
 export interface ILineTranslated {
@@ -72,6 +73,7 @@ export interface ILineTranslated {
     source: string
     target: string
     service?: string | null
+    model?: string | null
 }
 
 export interface ILineProofread {
@@ -80,6 +82,7 @@ export interface ILineProofread {
     source: string
     target: string
     service?: string | null
+    model?: string | null
 }
 
 export interface IProofreadStatus {

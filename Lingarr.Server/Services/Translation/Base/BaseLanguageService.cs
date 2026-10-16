@@ -13,11 +13,25 @@ public abstract class BaseLanguageService : BaseTranslationService
 
     private readonly string? _languageFilePath;
     private Task<List<SourceLanguage>>? _cachedLanguages;
+    private string? _modelOverride;
     protected string? _prompt;
     protected string? _userPrompt;
     protected string? _proofreadPrompt;
     protected string? _proofreadUserPrompt;
     protected Dictionary<string, string> _replacements;
+
+    /// <summary>
+    /// Records the model override for this instance. Set by the translation factory right after
+    /// construction; implementations read it through <see cref="ResolveModel"/> while initialising.
+    /// </summary>
+    protected void SetModelOverride(string model) => _modelOverride = model;
+
+    /// <summary>
+    /// Resolves the model this instance should use: the candidate's override when one was supplied,
+    /// otherwise the provider's configured default model.
+    /// </summary>
+    protected string? ResolveModel(string? configuredModel) =>
+        string.IsNullOrWhiteSpace(_modelOverride) ? configuredModel : _modelOverride;
 
     protected BaseLanguageService(
         ISettingService settings,
@@ -208,13 +222,6 @@ public abstract class BaseLanguageService : BaseTranslationService
         return await Task.FromResult(new ModelsResponse());
     }
     
-    private protected static Dictionary<int, string> MergeByPosition(List<StructuredBatchResponse> items) =>
-        items
-            .GroupBy(item => item.Position)
-            .ToDictionary(
-                group => group.Key,
-                group => string.Join("\n", group.Select(i => i.Line).Where(l => !string.IsNullOrWhiteSpace(l))));
-
     protected void SetLanguageReplacements(string sourceLanguage, string targetLanguage, string languageCodeFormatSetting)
     {
         var useLanguageCodes = languageCodeFormatSetting == "true";

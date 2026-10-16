@@ -1,7 +1,7 @@
-using Lingarr.Server.Services.Translation.LocalAi;
+using Lingarr.Server.Services.Translation.OpenAiCompatible;
 using Xunit;
 
-namespace Lingarr.Server.Tests.Services.Translation.LocalAi;
+namespace Lingarr.Server.Tests.Services.Translation.OpenAiCompatible;
 
 public class OpenCodeGoHeadersTests
 {

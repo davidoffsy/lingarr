@@ -32,6 +32,7 @@ export interface IPluginSummary {
     sourceFile?: string | null
     hasRequestTemplate: boolean
     supportsConnectionTest?: boolean
+    supportsModelOverride?: boolean
 }
 
 export interface IPluginManifest extends IPluginSummary {

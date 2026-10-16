@@ -16,6 +16,7 @@ using Lingarr.Core;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Translation;
 using Lingarr.Server.Services.Translation.LocalAi;
+using Lingarr.Server.Services.Translation.OpenAiCompatible;
 using Microsoft.Extensions.Logging;
 using Moq;
 using Moq.Protected;
@@ -145,7 +146,9 @@ public class LocalAiServiceTests
             () => _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None));
 
         // Assert
-        Assert.Contains("Unexpected error", exception.Message);
+        // The provider specific failure is kept instead of being wrapped into a generic one, so the
+        // status code stays visible in logs and the chain sees the real failure classification.
+        Assert.Contains("failed with status BadRequest", exception.Message);
         VerifyRequestsSent(1);
     }
 
@@ -379,7 +382,9 @@ public class LocalAiServiceTests
                 "application/json")
         });
 
-        var exception = await Assert.ThrowsAsync<TranslationException>(
+        // A rejected credential is reported as an authentication failure, which lets the translation
+        // chain skip the remaining models of this provider instead of failing them one by one.
+        var exception = await Assert.ThrowsAsync<TranslationAuthenticationException>(
             () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
 
         Assert.Contains("Unauthorized", exception.Message);

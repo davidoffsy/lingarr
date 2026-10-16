@@ -84,6 +84,7 @@ public static class ApplicationBuilderExtensions
             SettingKeys.Translation.DeepL.DeeplApiKey,
             SettingKeys.Translation.LibreTranslate.ApiKey,
             SettingKeys.Translation.LocalAi.ApiKey,
+            SettingKeys.Translation.Custom.ApiKey,
             SettingKeys.Integration.PlexToken,
             SettingKeys.Integration.PlexWebhookSecret,
             SettingKeys.Integration.ArrWebhookSecret,

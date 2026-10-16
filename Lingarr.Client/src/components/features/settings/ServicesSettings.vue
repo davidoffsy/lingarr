@@ -9,73 +9,114 @@
 
             <div class="space-y-2">
                 <span class="font-semibold">Translation services</span>
-                <ol class="space-y-2">
+                <ol class="space-y-1">
                     <li
-                        v-for="(serviceName, index) in services"
-                        :key="`${serviceName}-${index}`"
-                        class="flex items-center gap-3 rounded-md border p-3"
-                        :class="
-                            index === configuringIndex
-                                ? 'border-accent bg-accent/10'
-                                : 'border-accent/30'
-                        ">
-                        <span
-                            class="bg-accent/20 text-accent-content shrink-0 rounded px-2 py-0.5 text-xs font-semibold tracking-wider uppercase"
-                            aria-hidden="true">
-                            {{ index === 0 ? 'Primary' : `Fallback ${index}` }}
-                        </span>
-                        <div class="min-w-0 flex-1">
-                            <SelectComponent
-                                :selected="serviceName"
-                                :options="optionsForRow(index)"
-                                size="sm"
-                                @update:selected="(value: string) => createRow(index, value)" />
+                        v-for="(row, index) in rows"
+                        :key="row.id"
+                        class="rounded-md py-2.5"
+                        :class="{ 'bg-accent/10': row.id === configuringRowId }">
+                        <div class="flex items-center justify-between gap-6">
+                            <div class="flex min-w-0 items-center gap-2">
+                                <span
+                                    class="bg-accent/20 text-accent-content shrink-0 rounded px-2 py-0.5 text-xs font-semibold tracking-wider uppercase"
+                                    aria-hidden="true">
+                                    {{ index === 0 ? 'Primary' : `Fallback ${index}` }}
+                                </span>
+                            </div>
+                            <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                                <div class="w-52">
+                                    <SelectComponent
+                                        :selected="row.provider"
+                                        :options="serviceOptions"
+                                        size="sm"
+                                        @update:selected="
+                                            (value: string) => updateProvider(row.id, value)
+                                        " />
+                                </div>
+                                <div v-if="supportsModelOverride(row.provider)" class="w-52">
+                                    <TranslationChainModelField
+                                        :provider="row.provider"
+                                        :model-value="row.model"
+                                        @update:model-value="
+                                            (value: string) => updateModel(row.id, value)
+                                        " />
+                                </div>
+                                <div class="flex items-center">
+                                    <button
+                                        type="button"
+                                        class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                                        :disabled="row.id === configuringRowId"
+                                        :aria-pressed="row.id === configuringRowId"
+                                        title="Configure credentials"
+                                        aria-label="Configure credentials"
+                                        @click="configuringRowId = row.id">
+                                        <SettingIcon class="h-4 w-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                                        :disabled="index === 0"
+                                        title="Move up"
+                                        aria-label="Move up"
+                                        @click="moveRow(row.id, -1)">
+                                        <CaretUpIcon class="h-4 w-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                                        :disabled="index === rows.length - 1"
+                                        title="Move down"
+                                        aria-label="Move down"
+                                        @click="moveRow(row.id, 1)">
+                                        <CaretDownIcon class="h-4 w-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                                        :disabled="rows.length <= 1"
+                                        title="Remove service"
+                                        aria-label="Remove service"
+                                        @click="removeRow(row.id)">
+                                        <TrashIcon class="h-4 w-4" />
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                        <button
-                            type="button"
-                            class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
-                            :disabled="index === configuringIndex"
-                            :aria-pressed="index === configuringIndex"
-                            title="Configure credentials"
-                            aria-label="Configure credentials"
-                            @click="configuringIndex = index">
-                            <SettingIcon class="h-4 w-4" />
-                        </button>
-                        <button
-                            type="button"
-                            class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
-                            :disabled="index === 0"
-                            title="Move up"
-                            aria-label="Move up"
-                            @click="moveRow(index, -1)">
-                            <CaretUpIcon class="h-4 w-4" />
-                        </button>
-                        <button
-                            type="button"
-                            class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
-                            :disabled="index === services.length - 1"
-                            title="Move down"
-                            aria-label="Move down"
-                            @click="moveRow(index, 1)">
-                            <CaretDownIcon class="h-4 w-4" />
-                        </button>
-                        <button
-                            type="button"
-                            class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
-                            :disabled="services.length <= 1"
-                            title="Remove service"
-                            aria-label="Remove service"
-                            @click="removeRow(index)">
-                            <TrashIcon class="h-4 w-4" />
-                        </button>
+                        <ul v-if="rowIssuesFor(index).length" class="mt-1 space-y-0.5 pl-1">
+                            <li
+                                v-for="(issue, issueIndex) in rowIssuesFor(index)"
+                                :key="`${issue.kind}-${issueIndex}`"
+                                class="text-xs text-red-500">
+                                {{ issue.message }}
+                            </li>
+                        </ul>
                     </li>
-                    <li v-if="services.length < serviceOptions.length && serviceOptions.length > 0">
-                        <ButtonComponent variant="ghost" size="xs" @click="addRow">
-                            <PlusIcon class="mr-1 h-3 w-3" />
-                            Add fallback service
-                        </ButtonComponent>
+                    <li>
+                        <div class="flex items-center gap-2">
+                            <ButtonComponent
+                                variant="ghost"
+                                size="xs"
+                                :disabled="addRowDisabledReason !== null"
+                                :title="addRowDisabledReason ?? undefined"
+                                @click="addRow">
+                                <PlusIcon class="mr-1 h-3 w-3" />
+                                Add fallback service
+                            </ButtonComponent>
+                            <span v-if="addRowDisabledReason" class="text-xs opacity-60">
+                                {{ addRowDisabledReason }}
+                            </span>
+                        </div>
                     </li>
                 </ol>
+                <p v-if="saveError" class="text-sm text-red-500">{{ saveError }}</p>
+                <p v-if="unsavedNotice" class="text-sm text-amber-500">{{ unsavedNotice }}</p>
+                <p
+                    v-for="(issue, index) in chainIssues"
+                    :key="`${issue.kind}-${index}`"
+                    class="text-sm text-red-500">
+                    {{ issue.message }}
+                </p>
+                <p v-if="fallbackNotice" class="text-sm text-amber-500">{{ fallbackNotice }}</p>
             </div>
 
             <div v-if="configuringManifest || manifestError" class="mt-4 space-y-2">
@@ -96,15 +137,7 @@
                         <span class="font-semibold">Customize request template and prompts</span>
                         Adjust the AI request body, system prompt and context for translations.
                     </div>
-                    <ButtonComponent
-                        variant="primary"
-                        size="md"
-                        @click="
-                            router.push({
-                                name: 'request-template-settings',
-                                params: { service: services[configuringIndex] }
-                            })
-                        ">
+                    <ButtonComponent variant="primary" size="md" @click="openRequestSettings">
                         Open Request Settings
                         <ArrowRight class="mt-1 ml-1 h-4 w-4" />
                     </ButtonComponent>
@@ -120,7 +153,23 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingStore } from '@/store/setting'
-import { IPluginManifest, IPluginSummary, SETTINGS, SERVICE_TYPE } from '@/ts'
+import {
+    applyChainEntries,
+    chainRowEntries,
+    createChainRow,
+    duplicateChainEntryIndex,
+    IChainRow,
+    IPluginManifest,
+    IPluginSummary,
+    ISelectOption,
+    ITranslationChainEntry,
+    ITranslationChainIssue,
+    parseTranslationChain,
+    serializeTranslationChain,
+    SETTINGS,
+    SERVICE_TYPE,
+    usedChainProviders
+} from '@/ts'
 import servicesApi from '@/services'
 import CardComponent from '@/components/common/CardComponent.vue'
 import SelectComponent from '@/components/common/SelectComponent.vue'
@@ -128,6 +177,7 @@ import ButtonComponent from '@/components/common/ButtonComponent.vue'
 import SaveNotification from '@/components/common/SaveNotification.vue'
 import DynamicPluginForm from '@/components/features/settings/DynamicPluginForm.vue'
 import SourceAndTarget from '@/components/features/settings/SourceAndTarget.vue'
+import TranslationChainModelField from '@/components/features/settings/TranslationChainModelField.vue'
 import ArrowRight from '@/components/icons/ArrowRight.vue'
 import CaretUpIcon from '@/components/icons/CaretUpIcon.vue'
 import CaretDownIcon from '@/components/icons/CaretDownIcon.vue'
@@ -135,115 +185,393 @@ import TrashIcon from '@/components/icons/TrashIcon.vue'
 import PlusIcon from '@/components/icons/PlusIcon.vue'
 import SettingIcon from '@/components/icons/SettingIcon.vue'
 
+/** Provider the editor shows when nothing usable is stored; an empty chain stays a local placeholder. */
+const FALLBACK_PROVIDER = SERVICE_TYPE.LIBRETRANSLATE
+
+interface IChainValidationResult {
+    issues: ITranslationChainIssue[]
+    usedDefaultFallback: boolean
+    candidates: string[]
+    isValid: boolean
+}
+
 const saveNotification = ref<InstanceType<typeof SaveNotification> | null>(null)
 const settingsStore = useSettingStore()
 const router = useRouter()
 
-const serviceOptions = ref<{ value: string; label: string }[]>([])
+const serviceOptions = ref<ISelectOption[]>([])
+const pluginSummaries = ref<Map<string, IPluginSummary>>(new Map())
+const providersLoaded = ref(false)
 
-function parseServices(raw: unknown): string[] {
-    const list = JSON.parse((raw as string) ?? '[]') as string[]
-    return list.length > 0 ? list : [SERVICE_TYPE.LIBRETRANSLATE]
+function storedChainValue(): string {
+    const raw = settingsStore.getSetting(SETTINGS.SERVICE_TYPE)
+    // The store is filled asynchronously, so a value that is not a string yet reads as an empty chain.
+    return typeof raw === 'string' ? raw : ''
 }
 
-const services = ref<string[]>(parseServices(settingsStore.getSetting(SETTINGS.SERVICE_TYPE)))
-const configuringIndex = ref(0)
+/** Last value the server is known to hold; restored when a save request fails. */
+const savedChain = ref<string>(storedChainValue())
+const rows = ref<IChainRow[]>(
+    applyChainEntries([], parseTranslationChain(savedChain.value), FALLBACK_PROVIDER)
+)
+const validation = ref<IChainValidationResult | null>(null)
+const saveError = ref<string | null>(null)
+const configuringRowId = ref<string | null>(rows.value[0]?.id ?? null)
 const configuringManifest = ref<IPluginManifest | null>(null)
 const manifestError = ref<string | null>(null)
+/** True while a settings write is in flight, so the store watcher ignores our own optimistic write. */
+let saveInFlight = false
 
-async function loadManifest(provider: string) {
+const configuringRow = computed<IChainRow | null>(
+    () => rows.value.find((row) => row.id === configuringRowId.value) ?? null
+)
+
+const rowIssues = computed(() => {
+    const byRow = new Map<number, ITranslationChainIssue[]>()
+    for (const issue of validation.value?.issues ?? []) {
+        if (issue.index < 0) {
+            continue
+        }
+        const current = byRow.get(issue.index)
+        if (current) {
+            current.push(issue)
+        } else {
+            byRow.set(issue.index, [issue])
+        }
+    }
+    return byRow
+})
+
+const chainIssues = computed(() =>
+    (validation.value?.issues ?? []).filter((issue) => issue.index < 0)
+)
+
+/**
+ * A rejected edit stays in the editor so the user can fix the row, which means the editor diverges
+ * from the stored chain for a moment. Say so out loud instead of leaving a silently unsaved value.
+ */
+const unsavedNotice = computed<string | null>(() =>
+    validation.value && !validation.value.isValid
+        ? 'The chain is not saved while a row shows an error. Fix the rows above to store it.'
+        : null
+)
+
+const fallbackNotice = computed<string | null>(() => {
+    const result = validation.value
+    if (!result?.usedDefaultFallback) {
+        return null
+    }
+
+    const candidates = result.candidates.join(', ')
+    return candidates
+        ? `The stored value holds no usable candidate, so the default provider (${candidates}) applies until a valid chain is saved.`
+        : 'The stored value holds no usable candidate, so the default provider applies until a valid chain is saved.'
+})
+
+const configuringLabel = computed(() => {
+    const provider = configuringRow.value?.provider
+    if (!provider) {
+        return ''
+    }
+    return serviceOptions.value.find((option) => option.value === provider)?.label ?? provider
+})
+
+/**
+ * Provider a new row starts with: an unused provider when one is left, otherwise the first entry of
+ * the list. The unique unit of the chain is the `(provider, model)` candidate, not the provider, so a
+ * second row for the same provider stays valid and is how one provider gets several models
+ * (`custom (model-a)`, `custom (model-b)`).
+ */
+const newRowProvider = computed<ISelectOption | null>(() => {
+    const used = usedChainProviders(rows.value)
+    return (
+        serviceOptions.value.find((option) => !used.has(option.value.trim().toLowerCase())) ??
+        serviceOptions.value[0] ??
+        null
+    )
+})
+
+/** A missing provider list is the only reason the add button is disabled. */
+const addRowDisabledReason = computed<string | null>(() => {
+    if (serviceOptions.value.length > 0) {
+        return null
+    }
+
+    return providersLoaded.value ? 'The provider list is unavailable.' : 'Loading providers...'
+})
+
+function describeEntry(entry: ITranslationChainEntry): string {
+    const model = entry.model?.trim()
+    return model ? `${entry.provider} (${model})` : entry.provider
+}
+
+function rowIndexById(rowId: string): number {
+    return rows.value.findIndex((row) => row.id === rowId)
+}
+
+function supportsModelOverride(provider: string): boolean {
+    return pluginSummaries.value.get(provider.trim().toLowerCase())?.supportsModelOverride === true
+}
+
+/** Provider of the row whose credentials are being configured, lower cased for comparisons. */
+function configuredProvider(): string {
+    return configuringRow.value?.provider.trim().toLowerCase() ?? ''
+}
+
+function rowIssuesFor(index: number): ITranslationChainIssue[] {
+    return rowIssues.value.get(index) ?? []
+}
+
+/**
+ * Replaces the editor with a stored chain. Candidates that did not change keep their row id, so a save
+ * round-trip neither steals focus nor drops a model draft that is still being typed.
+ */
+function adoptStoredChain(raw: unknown): void {
+    rows.value = applyChainEntries(rows.value, parseTranslationChain(raw), FALLBACK_PROVIDER)
+    validation.value = null
+
+    if (!rows.value.some((row) => row.id === configuringRowId.value)) {
+        configuringRowId.value = rows.value[0]?.id ?? null
+    }
+}
+
+/**
+ * Degraded validation used when the validation endpoint is unreachable: the server knows the installed
+ * providers and their model support, but a settings page must not block every save while it is down.
+ */
+function localValidation(entries: ITranslationChainEntry[]): IChainValidationResult {
+    const duplicate = duplicateChainEntryIndex(entries)
+    const issues: ITranslationChainIssue[] =
+        duplicate < 0
+            ? []
+            : [
+                  {
+                      // Same kind the server reports, so the UI does not have to distinguish them.
+                      kind: 'DuplicateProviderModel',
+                      index: duplicate,
+                      message: `This row repeats ${describeEntry(entries[duplicate])} earlier in the chain.`,
+                      value: null
+                  }
+              ]
+
+    return { issues, usedDefaultFallback: false, candidates: [], isValid: issues.length === 0 }
+}
+
+async function validateChain(entries: ITranslationChainEntry[]): Promise<IChainValidationResult> {
+    try {
+        const response = await servicesApi.translationChain.validateTranslationChain(
+            serializeTranslationChain(entries)
+        )
+
+        return {
+            issues: response.issues ?? [],
+            usedDefaultFallback: response.usedDefaultFallback === true,
+            candidates: response.candidates ?? [],
+            isValid: response.isValid === true
+        }
+    } catch (error) {
+        console.error('Failed to validate the translation chain', error)
+        return localValidation(entries)
+    }
+}
+
+/**
+ * Applies an edit and tries to store it.
+ *
+ * A chain the server rejects stays in the editor with its messages shown inline and nothing is stored,
+ * because only the user can fix the offending row. A settings write that fails instead rolls the
+ * editor back to the last saved chain, so no value is ever left looking saved while it is not.
+ */
+async function persist(next: IChainRow[]): Promise<boolean> {
+    rows.value = next
+    saveError.value = null
+
+    const entries = chainRowEntries(next)
+    const result = await validateChain(entries)
+    validation.value = result
+    if (!result.isValid) {
+        return false
+    }
+
+    const serialized = serializeTranslationChain(entries)
+    saveInFlight = true
+    try {
+        await settingsStore.updateSetting(SETTINGS.SERVICE_TYPE, serialized, true)
+        savedChain.value = serialized
+        validation.value = null
+        saveNotification.value?.show()
+        return true
+    } catch (error) {
+        console.error('Failed to save the translation chain', error)
+        // updateSetting writes the setting into the store before the request, so a failed save leaves
+        // the in-memory value ahead of the server: restore the saved chain, which also re-derives the
+        // editor through the store watcher.
+        settingsStore.storeSetting(SETTINGS.SERVICE_TYPE, savedChain.value)
+        saveError.value =
+            'The translation chain could not be saved. Check the connection and try again.'
+        return false
+    } finally {
+        saveInFlight = false
+    }
+}
+
+function updateProvider(rowId: string, provider: string): void {
+    const index = rowIndexById(rowId)
+    if (index < 0) {
+        return
+    }
+
+    const row = rows.value[index]
+    if (row.provider.trim().toLowerCase() === provider.trim().toLowerCase()) {
+        // SelectComponent emits for the already selected option too, and re-selecting a provider must
+        // not drop the model override the row carries.
+        return
+    }
+
+    // A model id belongs to one provider, so switching provider clears the row model; a failed save
+    // rolls the whole row back to the stored chain.
+    void persist(
+        rows.value.map((entry, current) =>
+            current === index ? { ...entry, provider, model: '' } : entry
+        )
+    )
+}
+
+function updateModel(rowId: string, model: string): void {
+    const index = rowIndexById(rowId)
+    if (index < 0) {
+        // The row was removed while the edit was in flight; dropping the value beats writing it into
+        // whichever row took its place.
+        return
+    }
+
+    void persist(
+        rows.value.map((entry, current) => (current === index ? { ...entry, model } : entry))
+    )
+}
+
+function addRow(): void {
+    const provider = newRowProvider.value
+    if (!provider) {
+        return
+    }
+
+    // With every provider already in the chain the new row repeats a candidate on purpose: the inline
+    // error then asks for a different model, which is the only way to compose `custom (model-b)`.
+    void persist([...rows.value, createChainRow(provider.value)])
+}
+
+function removeRow(rowId: string): void {
+    if (rows.value.length <= 1) {
+        return
+    }
+
+    const index = rowIndexById(rowId)
+    const next = rows.value.filter((row) => row.id !== rowId)
+    if (index < 0 || next.length === rows.value.length) {
+        return
+    }
+
+    if (configuringRowId.value === rowId) {
+        configuringRowId.value = next[Math.min(index, next.length - 1)].id
+    }
+
+    void persist(next)
+}
+
+function moveRow(rowId: string, delta: number): void {
+    const index = rowIndexById(rowId)
+    const target = index + delta
+    if (index < 0 || target < 0 || target >= rows.value.length) {
+        return
+    }
+
+    const next = [...rows.value]
+    next[index] = rows.value[target]
+    next[target] = rows.value[index]
+    void persist(next)
+}
+
+function openRequestSettings(): void {
+    // RequestTemplatePage compares the route parameter against lower cased chain providers, so a
+    // stored value such as `LocalAI` has to be normalised or the page silently opens another tab.
+    const provider = configuringRow.value?.provider.trim().toLowerCase()
+    if (!provider) {
+        return
+    }
+
+    void router.push({ name: 'request-template-settings', params: { service: provider } })
+}
+
+async function loadManifest(provider: string): Promise<void> {
+    if (!provider) {
+        configuringManifest.value = null
+        manifestError.value = null
+        return
+    }
+
+    const requested = provider.trim().toLowerCase()
     try {
         const manifest = await servicesApi.plugin.getManifest(provider)
+        if (configuredProvider() !== requested) {
+            return
+        }
+
         await settingsStore.setPluginSettings(manifest.settings)
+        // setPluginSettings awaits as well: re-check before publishing the form, otherwise the title
+        // and the rendered fields can describe two different providers.
+        if (configuredProvider() !== requested) {
+            return
+        }
 
         configuringManifest.value = manifest
         manifestError.value = null
     } catch (error) {
         console.error('Failed to load manifest', error)
+        if (configuredProvider() !== requested) {
+            return
+        }
+
         configuringManifest.value = null
         manifestError.value = `No manifest available for ${provider}.`
     }
 }
 
-function optionsForRow(index: number) {
-    const usedElsewhere = new Set(
-        services.value.filter((_, currentIndex) => currentIndex !== index)
-    )
-    return serviceOptions.value.filter((option) => !usedElsewhere.has(option.value))
-}
-
-async function save(next: string[]) {
-    services.value = next
-    await settingsStore.updateSetting(SETTINGS.SERVICE_TYPE, JSON.stringify(next), true)
-    saveNotification.value?.show()
-}
-
-function createRow(index: number, value: string) {
-    const next = services.value.map((service, currentIndex) =>
-        currentIndex === index ? value : service
-    )
-    save(next)
-}
-
-function addRow() {
-    const unused = serviceOptions.value.find((option) => !services.value.includes(option.value))
-    if (!unused) {
-        return
-    }
-    save([...services.value, unused.value])
-}
-
-function removeRow(index: number) {
-    if (services.value.length <= 1) {
-        return
-    }
-    save(services.value.filter((_, currentIndex) => currentIndex !== index))
-    configuringIndex.value = Math.min(configuringIndex.value, services.value.length - 1)
-}
-
-function moveRow(index: number, delta: number) {
-    const target = index + delta
-    if (target < 0 || target >= services.value.length) {
-        return
-    }
-    const next = [...services.value]
-    const moved = next[index]
-    next[index] = next[target]
-    next[target] = moved
-    if (configuringIndex.value === index) {
-        configuringIndex.value = target
-    } else if (configuringIndex.value === target) {
-        configuringIndex.value = index
-    }
-    save(next)
-}
-
-const configuringLabel = computed(() => {
-    const value = services.value[configuringIndex.value]
-    return serviceOptions.value.find((option) => option.value === value)?.label ?? value
-})
-
 watch(
     () => settingsStore.getSetting(SETTINGS.SERVICE_TYPE),
     (raw) => {
-        services.value = parseServices(raw)
+        if (saveInFlight) {
+            // Our own optimistic write; a failed request restores the store value explicitly.
+            return
+        }
+
+        savedChain.value = typeof raw === 'string' ? raw : ''
+        adoptStoredChain(raw)
+        saveError.value = null
     }
 )
 
 watch(
-    () => services.value[configuringIndex.value],
-    loadManifest,
+    () => configuringRow.value?.provider,
+    (provider) => {
+        void loadManifest(provider ?? '')
+    },
     { immediate: true }
 )
 
 onMounted(async () => {
     try {
-        const summaries: IPluginSummary[] = await servicesApi.plugin.list()
+        const summaries = await servicesApi.plugin.list()
+        pluginSummaries.value = new Map(
+            summaries.map((summary) => [summary.provider.trim().toLowerCase(), summary])
+        )
         serviceOptions.value = summaries
             .map((summary) => ({ value: summary.provider, label: summary.displayName }))
             .sort((a, b) => a.label.localeCompare(b.label))
     } catch (error) {
         console.error('Failed to load translation provider list', error)
+    } finally {
+        providersLoaded.value = true
     }
 })
 </script>

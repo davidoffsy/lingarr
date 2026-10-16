@@ -50,7 +50,8 @@ public class ProgressService : IProgressService
         string source,
         string target,
         string? service = null,
-        LanguagePair? pair = null)
+        LanguagePair? pair = null,
+        string? model = null)
     {
         var fallback = GetFallbackPair(pair);
         _dbContext.TranslationRequestLines.Add(new TranslationRequestLine
@@ -60,6 +61,7 @@ public class ProgressService : IProgressService
             Source = source,
             Target = target,
             Service = service,
+            Model = model,
             MatchedSource = fallback?.Source,
             MatchedTarget = fallback?.Target,
             Tier = fallback?.Tier
@@ -73,6 +75,7 @@ public class ProgressService : IProgressService
             Source = source,
             Target = target,
             Service = service,
+            Model = model,
             MatchedSource = fallback?.Source,
             MatchedTarget = fallback?.Target,
             Tier = fallback?.Tier.ToString()
@@ -92,6 +95,7 @@ public class ProgressService : IProgressService
                 Source = line.Source,
                 Target = line.Target,
                 Service = line.Service,
+                Model = line.Model,
                 MatchedSource = fallback?.Source,
                 MatchedTarget = fallback?.Target,
                 Tier = fallback?.Tier
@@ -109,6 +113,7 @@ public class ProgressService : IProgressService
                 line.Source,
                 line.Target,
                 line.Service,
+                line.Model,
                 MatchedSource = fallback?.Source,
                 MatchedTarget = fallback?.Target,
                 Tier = fallback?.Tier.ToString()
@@ -122,7 +127,8 @@ public class ProgressService : IProgressService
         int position,
         string source,
         string target,
-        string? service)
+        string? service,
+        string? model = null)
     {
         var line = await _dbContext.TranslationRequestLines
             .Where(requestLine => requestLine.TranslationRequestId == request.Id && requestLine.Position == position)
@@ -137,7 +143,8 @@ public class ProgressService : IProgressService
                 Position = position,
                 Source = source,
                 Target = target,
-                Service = service
+                Service = service,
+                Model = model
             });
         }
         else
@@ -146,6 +153,7 @@ public class ProgressService : IProgressService
             if (service != null)
             {
                 line.Service = service;
+                line.Model = model;
             }
         }
         await _dbContext.SaveChangesAsync();
@@ -156,7 +164,8 @@ public class ProgressService : IProgressService
             Position = position,
             Source = source,
             Target = target,
-            Service = service
+            Service = service,
+            Model = model
         });
     }
 

@@ -1,45 +1,23 @@
+using Lingarr.Server.Services.Translation.OpenAiCompatible;
+
 namespace Lingarr.Server.Services.Translation.LocalAi;
 
 /// <summary>
 /// Resolves LocalAI completion and model-catalogue URLs from a user-supplied endpoint and protocol.
 /// Auto mode preserves full completion/generate paths, and completes a bare host
 /// (optionally with /v1) to the generate protocol. Explicit protocols accept either
-/// a base URL or a full API path.
+/// a base URL or a full API path. The OpenAI-compatible chat/models paths are shared with
+/// the Custom provider through <see cref="OpenAiCompatibleEndpoint"/>.
 /// </summary>
 public static class LocalAiEndpointResolver
 {
-    private static readonly string[] KnownApiSuffixes =
-    [
-        "/v1/chat/completions",
-        "/chat/completions",
-        "/v1/completions",
-        "/completions",
-        "/api/generate",
-        "/api/tags",
-        "/v1/models",
-        "/models"
-    ];
+    public static string TrimSlash(string url) => OpenAiCompatibleEndpoint.TrimSlash(url);
 
-    public static string TrimSlash(string url) => url.Trim().TrimEnd('/');
+    public static bool LooksLikeChatCompletions(string endpoint) =>
+        OpenAiCompatibleEndpoint.LooksLikeChatCompletions(endpoint);
 
-    public static bool LooksLikeChatCompletions(string endpoint)
-    {
-        return TrimSlash(endpoint).EndsWith("completions", StringComparison.OrdinalIgnoreCase);
-    }
-
-    public static string StripKnownApiPaths(string endpoint)
-    {
-        var trimmed = TrimSlash(endpoint);
-        foreach (var suffix in KnownApiSuffixes)
-        {
-            if (trimmed.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
-            {
-                return trimmed[..^suffix.Length].TrimEnd('/');
-            }
-        }
-
-        return trimmed;
-    }
+    public static string StripKnownApiPaths(string endpoint) =>
+        OpenAiCompatibleEndpoint.StripKnownApiPaths(endpoint);
 
     public static LocalAiResolvedEndpoint ResolveCompletionEndpoint(string endpoint, LocalAiProtocol protocol)
     {
@@ -97,32 +75,16 @@ public static class LocalAiEndpointResolver
         return path.Length == 0 || string.Equals(path, "/v1", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildChatCompletionsUrl(string trimmed)
-    {
-        var root = StripKnownApiPaths(trimmed);
-        if (root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
-        {
-            return root + "/chat/completions";
-        }
-
-        return root + "/v1/chat/completions";
-    }
+    private static string BuildChatCompletionsUrl(string trimmed) =>
+        OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(trimmed);
 
     private static string BuildGenerateUrl(string trimmed)
     {
         return NativeOrigin(trimmed) + "/api/generate";
     }
 
-    private static string BuildModelsUrl(string trimmed)
-    {
-        var root = StripKnownApiPaths(trimmed);
-        if (root.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
-        {
-            return root + "/models";
-        }
-
-        return root + "/v1/models";
-    }
+    private static string BuildModelsUrl(string trimmed) =>
+        OpenAiCompatibleEndpoint.ResolveModelsUrl(trimmed);
 
     private static string BuildTagsUrl(string trimmed)
     {

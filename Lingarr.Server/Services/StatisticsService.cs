@@ -1,9 +1,10 @@
-﻿using Lingarr.Core.Configuration;
+using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
 using Lingarr.Core.Entities;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models.Batch.Response;
 using Lingarr.Server.Models.FileSystem;
+using Lingarr.Server.Services.Translation.Attribution;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lingarr.Server.Services;
@@ -70,74 +71,93 @@ public class StatisticsService : IStatisticsService
 
     public async Task<int> UpdateTranslationStatisticsFromSubtitles(
         TranslationRequest request,
-        string serviceType,
-        string? modelName,
+        TranslationSourceSummary sources,
         List<SubtitleItem> translatedSubtitles)
     {
         var lineCount = translatedSubtitles.Sum(s => s.Lines.Count);
         var charCount = translatedSubtitles.Sum(s => s.Lines.Sum(l => l.Length));
 
         return await UpdateTranslationStatisticsInternal(
-            request, serviceType, modelName, lineCount, charCount);
+            request, sources, lineCount, charCount);
     }
 
     public async Task<int> UpdateTranslationStatisticsFromLines(
         TranslationRequest request,
-        string serviceType,
-        string? modelName,
+        TranslationSourceSummary sources,
         BatchTranslatedLine[] translatedLines)
     {
         var lineCount = translatedLines.Length;
         var charCount = translatedLines.Sum(s => s.Line.Length);
 
         return await UpdateTranslationStatisticsInternal(
-            request, serviceType, modelName, lineCount, charCount);
+            request, sources, lineCount, charCount);
     }
 
     private async Task<int> UpdateTranslationStatisticsInternal(
         TranslationRequest request,
-        string serviceType,
-        string? modelName,
+        TranslationSourceSummary sources,
         int totalLines,
         int totalCharacters)
     {
         var stats = await GetOrCreateStatistics();
         var today = Today;
 
-        // Update total counts
-        stats.TotalLinesTranslated += totalLines;
-        stats.TotalCharactersTranslated += totalCharacters;
-        stats.TotalFilesTranslated++;
-
-        // Update media type statistics
-        var mediaType = request.MediaType.ToString();
-        var mediaTypeStats = stats.TranslationsByMediaType;
-        mediaTypeStats[mediaType] = mediaTypeStats.GetValueOrDefault(mediaType) + 1;
-        stats.TranslationsByMediaType = mediaTypeStats;
-
-        // Update service type statistics
-        var serviceStats = stats.TranslationsByService;
-        serviceStats[serviceType] = serviceStats.GetValueOrDefault(serviceType) + 1;
-        stats.TranslationsByService = serviceStats;
-
-        // Update language pair statistics 
-        var languageStats = stats.SubtitlesByLanguage;
-        var languagePair = $"{request.SourceLanguage}:{request.TargetLanguage}";
-        languageStats[languagePair] = languageStats.GetValueOrDefault(languagePair) + 1;
-        stats.SubtitlesByLanguage = languageStats;
-
-        // Update model statistics (correlated with service)
-        if (!string.IsNullOrEmpty(modelName))
+        // Invariant: TotalFilesTranslated, TranslationsByMediaType, SubtitlesByLanguage and the daily
+        // counter all count finished files, and TranslationsByService counts those same files grouped by
+        // the source that did most of the work. A run that produced no new translated line -- every
+        // position was already translated by an earlier run, or the remaining lines failed -- must
+        // therefore not touch any of them, otherwise the "by service" breakdown the front end shows
+        // stops adding up to the file total.
+        // totalLines/totalCharacters describe exactly the positions covered by sources (the caller passes
+        // the same set), so they are updated together with the attribution below and never on their own.
+        if (!sources.IsEmpty)
         {
-            var modelStats = stats.TranslationsByModel;
-            var serviceModelKey = $"{serviceType}:{modelName}";
-            modelStats[serviceModelKey] = modelStats.GetValueOrDefault(serviceModelKey) + 1;
-            stats.TranslationsByModel = modelStats;
-        }
+            // Update total counts
+            stats.TotalLinesTranslated += totalLines;
+            stats.TotalCharactersTranslated += totalCharacters;
+            stats.TotalFilesTranslated++;
 
-        // Update daily statistics
-        var dailyStats = await GetOrCreateDailyStatistics(today);
-        dailyStats.TranslationCount++;
+            // Update media type statistics
+            var mediaType = request.MediaType.ToString();
+            var mediaTypeStats = stats.TranslationsByMediaType;
+            mediaTypeStats[mediaType] = mediaTypeStats.GetValueOrDefault(mediaType) + 1;
+            stats.TranslationsByMediaType = mediaTypeStats;
+
+            // File level attribution: the finished file is counted once, under the source that translated
+            // most of its lines. Line level detail lives in LinesBySource below.
+            var dominant = sources.Dominant!;
+            var serviceStats = stats.TranslationsByService;
+            serviceStats[dominant.Source.Provider] = serviceStats.GetValueOrDefault(dominant.Source.Provider) + 1;
+            stats.TranslationsByService = serviceStats;
+
+            if (!string.IsNullOrWhiteSpace(dominant.Source.Model))
+            {
+                var modelStats = stats.TranslationsByModel;
+                modelStats[dominant.Source.DisplayName] = modelStats.GetValueOrDefault(dominant.Source.DisplayName) + 1;
+                stats.TranslationsByModel = modelStats;
+            }
+
+            // Update language pair statistics 
+            var languageStats = stats.SubtitlesByLanguage;
+            var languagePair = $"{request.SourceLanguage}:{request.TargetLanguage}";
+            languageStats[languagePair] = languageStats.GetValueOrDefault(languagePair) + 1;
+            stats.SubtitlesByLanguage = languageStats;
+
+            // Line level attribution: every provider and model that produced lines is counted, so a chain
+            // that fell back from one model to another reports both. Sum(LinesBySource) equals
+            // TotalLinesTranslated for everything counted here, which is what the front end relies on.
+            var sourceStats = stats.LinesBySource;
+            foreach (var count in sources.Counts)
+            {
+                var key = count.Source.DisplayName;
+                sourceStats[key] = sourceStats.GetValueOrDefault(key) + count.Lines;
+            }
+            stats.LinesBySource = sourceStats;
+
+            // Update daily statistics
+            var dailyStats = await GetOrCreateDailyStatistics(today);
+            dailyStats.TranslationCount++;
+        }
 
         return await _dbContext.SaveChangesAsync();
     }
@@ -156,6 +176,7 @@ public class StatisticsService : IStatisticsService
         stats.TranslationsByService = new Dictionary<string, int>();
         stats.SubtitlesByLanguage = new Dictionary<string, int>();
         stats.TranslationsByModel = new Dictionary<string, int>();
+        stats.LinesBySource = new Dictionary<string, int>();
 
         // Delete all daily statistics
         var dailyStats = await _dbContext.DailyStatistics.ToListAsync();

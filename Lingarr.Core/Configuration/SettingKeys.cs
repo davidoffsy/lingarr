@@ -62,6 +62,18 @@ public static class SettingKeys
             }
         }
 
+        /// <summary>
+        /// Independent custom OpenAI-compatible provider. Shares no keys with
+        /// <see cref="LocalAi"/> so both entries can be configured side by side.
+        /// </summary>
+        public static class Custom
+        {
+            public const string Model = "custom_model";
+            public const string Endpoint = "custom_endpoint";
+            public const string ApiKey = "custom_api_key";
+            public const string ChatRequestTemplate = "custom_chat_request_template";
+        }
+
         public static class DeepL
         {
             public const string DeeplApiKey = "deepl_api_key";

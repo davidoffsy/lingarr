@@ -45,13 +45,14 @@
                     @update:validation="(val) => (isValid.aiMaxTokens = val)" />
             </template>
 
-            <template v-if="isLocalAiService">
+            <template v-if="usesSharedChatThinking">
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Thinking</span>
                     Controls whether the model spends tokens on chain-of-thought. Auto (default)
                     sends no thinking field — the compatible choice for Ollama and most OpenCode
                     Go models. Off writes thinking.disabled (needed for OpenCode Go / MiMo). On
-                    writes thinking.enabled. Only applied to LocalAI OpenAI-compatible chat.
+                    writes thinking.enabled. Only applied to the providers that translate through the
+                    shared OpenAI-compatible chat (LocalAI and Custom).
                 </div>
                 <SelectComponent
                     :selected="aiThinking"
@@ -102,7 +103,7 @@
 <script setup lang="ts">
 import { computed, ref, reactive } from 'vue'
 import { useSettingStore } from '@/store/setting'
-import { AI_THINKING_MODES, INPUT_VALIDATION_TYPE, SERVICE_TYPE, SETTINGS } from '@/ts'
+import { AI_THINKING_MODES, chainProviders, INPUT_VALIDATION_TYPE, SERVICE_TYPE, SETTINGS } from '@/ts'
 import CardComponent from '@/components/common/CardComponent.vue'
 import SaveNotification from '@/components/common/SaveNotification.vue'
 import InputComponent from '@/components/common/InputComponent.vue'
@@ -126,15 +127,9 @@ const thinkingOptions = [
     { value: AI_THINKING_MODES.ON, label: 'On' }
 ]
 
-const serviceType = computed(() => {
-    try {
-        const raw = settingsStore.getSetting(SETTINGS.SERVICE_TYPE) as string
-        const services: string[] = JSON.parse(raw)
-        return services[0] ?? ''
-    } catch {
-        return ''
-    }
-})
+const serviceType = computed(
+    () => chainProviders(settingsStore.getSetting(SETTINGS.SERVICE_TYPE))[0] ?? ''
+)
 
 const isAiService = computed(() =>
     [
@@ -142,6 +137,7 @@ const isAiService = computed(() =>
         SERVICE_TYPE.DEEPSEEK,
         SERVICE_TYPE.GEMINI,
         SERVICE_TYPE.LOCALAI,
+        SERVICE_TYPE.CUSTOM,
         SERVICE_TYPE.MISTRAL,
         SERVICE_TYPE.OPENAI,
         SERVICE_TYPE.XAI
@@ -150,6 +146,7 @@ const isAiService = computed(() =>
             | 'openai'
             | 'anthropic'
             | 'localai'
+            | 'custom'
             | 'gemini'
             | 'deepseek'
             | 'mistral'
@@ -157,7 +154,13 @@ const isAiService = computed(() =>
     )
 )
 
-const isLocalAiService = computed(() => serviceType.value === SERVICE_TYPE.LOCALAI)
+/**
+ * Providers that read the shared `ai_thinking` setting. `LocalAiService` and `CustomService` both
+ * translate through the shared OpenAI-compatible chat, so the setting applies to both of them.
+ */
+const usesSharedChatThinking = computed(
+    () => serviceType.value === SERVICE_TYPE.LOCALAI || serviceType.value === SERVICE_TYPE.CUSTOM
+)
 
 const useBatchTranslation = computed({
     get: (): string => settingsStore.getSetting(SETTINGS.USE_BATCH_TRANSLATION) as string,

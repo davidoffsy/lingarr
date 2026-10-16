@@ -1,7 +1,8 @@
-﻿using GTranslate.Translators;
+using GTranslate.Translators;
 using Lingarr.Contracts.Translation;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Translation;
+using Lingarr.Server.Services.Translation.Chain;
 
 namespace Lingarr.Server.Services.Translation;
 
@@ -94,6 +95,14 @@ public class TranslationFactory : ITranslationServiceFactory
                 _serviceProvider.GetRequiredService<IRequestTemplateService>()
             ),
 
+            "custom" => new CustomService(
+                _serviceProvider.GetRequiredService<ISettingService>(),
+                _serviceProvider.GetRequiredService<HttpClient>(),
+                _serviceProvider.GetRequiredService<ILogger<CustomService>>(),
+                languageCodeService,
+                _serviceProvider.GetRequiredService<IRequestTemplateService>()
+            ),
+
             "deepseek" => new DeepSeekService(
                 _serviceProvider.GetRequiredService<ISettingService>(),
                 _serviceProvider.GetRequiredService<HttpClient>(),
@@ -133,22 +142,71 @@ public class TranslationFactory : ITranslationServiceFactory
     }
 
     /// <inheritdoc />
-    public IReadOnlyList<TranslationServiceEntry> CreateTranslationServices(IReadOnlyList<string> serviceTypes)
+    public IReadOnlyList<TranslationServiceEntry> CreateTranslationServices(IReadOnlyList<TranslationChainEntry> entries)
     {
-        var services = new List<TranslationServiceEntry>(serviceTypes.Count);
-        foreach (var serviceType in serviceTypes)
+        var candidates = new List<TranslationServiceEntry>(entries.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in entries)
         {
-            var name = serviceType.ToLowerInvariant();
+            var name = entry.ProviderKey;
+            // The same (provider, model) twice adds no fallback value: the second candidate would
+            // always fail exactly like the first. Kept explicit so a duplicate never silently
+            // consumes retries, while the same provider with a different model stays usable.
+            var identity = TranslationChainIdentity.Key(name, entry.ModelKey);
+            if (!seen.Add(identity))
+            {
+                _logger.LogWarning(
+                    "Skipping duplicate translation candidate '{Candidate}': it already appears earlier in the chain.",
+                    entry.Describe());
+                continue;
+            }
+
             try
             {
                 var service = CreateTranslationService(name);
-                services.Add(new TranslationServiceEntry(name, service, service as IBatchTranslationService));
+                if (!ApplyModelOverride(name, entry, service))
+                {
+                    continue;
+                }
+
+                candidates.Add(new TranslationServiceEntry(
+                    name,
+                    service,
+                    service as IBatchTranslationService,
+                    entry.ModelKey));
             }
             catch (ArgumentException)
             {
                 _logger.LogWarning("Skipping unknown translation service '{ServiceType}'.", name);
             }
         }
-        return services;
+        return candidates;
+    }
+
+    /// <summary>
+    /// Applies the candidate's model override to a freshly built instance. Returns false when the
+    /// provider does not declare support for overrides, in which case the candidate is dropped rather
+    /// than silently translated with the provider default model.
+    /// </summary>
+    private bool ApplyModelOverride(string provider, TranslationChainEntry entry, ITranslationService service)
+    {
+        var model = entry.ModelKey;
+        if (model is null)
+        {
+            return true;
+        }
+
+        if (service is IModelOverridable overridable)
+        {
+            overridable.OverrideModel(model);
+            return true;
+        }
+
+        _logger.LogWarning(
+            "Provider '{Provider}' does not support a per-candidate model; skipping the candidate with model '{Model}'. " +
+            "A provider must not declare SupportsModelOverride without implementing IModelOverridable.",
+            provider,
+            model);
+        return false;
     }
 }

@@ -1,8 +1,7 @@
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using Lingarr.Contracts.Models;
-using Lingarr.Server.Models;
 using Lingarr.Server.Models.Integrations.Translation;
+using Lingarr.Server.Services.Translation.OpenAiCompatible;
 
 namespace Lingarr.Server.Services.Translation.LocalAi;
 
@@ -25,8 +24,8 @@ public static class LocalAiModelCatalog
 
             using var request = new HttpRequestMessage(HttpMethod.Get, modelsUrl);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-            LocalAiHttp.ApplyBearer(request, apiKey);
-            LocalAiHttp.ApplyClientHeaders(request);
+            OpenAiCompatibleHttp.ApplyBearer(request, apiKey);
+            OpenAiCompatibleHttp.ApplyClientHeaders(request);
 
             using var response = await httpClient.SendAsync(request, timeout.Token);
             if (!response.IsSuccessStatusCode)
@@ -41,7 +40,7 @@ public static class LocalAiModelCatalog
 
             return protocol == LocalAiProtocol.OpenAiChat
                    || (protocol == LocalAiProtocol.Auto && LocalAiEndpointResolver.LooksLikeChatCompletions(endpoint))
-                ? await ReadOpenAiModelsAsync(response, timeout.Token)
+                ? await OpenAiCompatibleModelCatalog.ReadModelsAsync(response, timeout.Token)
                 : await ReadOllamaTagsAsync(response, timeout.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -58,28 +57,6 @@ public static class LocalAiModelCatalog
                 Message = $"Error fetching models from {modelsUrl}: {exception.Message}"
             };
         }
-    }
-
-    private static async Task<ModelsResponse> ReadOpenAiModelsAsync(
-        HttpResponseMessage response,
-        CancellationToken cancellationToken)
-    {
-        var modelsResponse = await response.Content.ReadFromJsonAsync<ModelsListResponse>(cancellationToken);
-        if (modelsResponse?.Data == null)
-        {
-            return new ModelsResponse
-            {
-                Message = "No models data returned from the API."
-            };
-        }
-
-        var options = modelsResponse.Data
-            .Where(model => !string.IsNullOrWhiteSpace(model.Id))
-            .Select(model => new LabelValue { Label = model.Id, Value = model.Id })
-            .OrderBy(option => option.Label, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        return new ModelsResponse { Options = options };
     }
 
     private static async Task<ModelsResponse> ReadOllamaTagsAsync(

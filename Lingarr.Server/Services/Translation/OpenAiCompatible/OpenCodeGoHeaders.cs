@@ -1,4 +1,4 @@
-namespace Lingarr.Server.Services.Translation.LocalAi;
+namespace Lingarr.Server.Services.Translation.OpenAiCompatible;
 
 /// <summary>
 /// OpenCode Go requires a stable <c>x-opencode-session</c> header for routing.

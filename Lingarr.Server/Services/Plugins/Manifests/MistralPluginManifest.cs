@@ -15,6 +15,8 @@ public sealed class MistralPluginManifest : IPluginManifest
 
     public bool HasRequestTemplate => true;
 
+    public bool SupportsModelOverride => true;
+
     public IReadOnlyList<PluginSettingField> Settings { get; } =
     [
         new()

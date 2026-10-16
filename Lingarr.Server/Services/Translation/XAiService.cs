@@ -1,4 +1,3 @@
-using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -7,13 +6,15 @@ using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Models.Batch;
 using Lingarr.Contracts.Translation;
 using Lingarr.Core.Configuration;
+using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models;
+using Lingarr.Server.Services.Translation.Batch;
 using Lingarr.Server.Services.Translation.Base;
 
 namespace Lingarr.Server.Services.Translation;
 
-public class XAiService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService
+public class XAiService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService, IModelOverridable
 {
     private readonly string? _endpoint = "https://api.x.ai/v1";
     private string? _model;
@@ -27,6 +28,9 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
 
     /// <inheritdoc />
     public override string? ModelName => _model;
+
+    /// <inheritdoc />
+    public void OverrideModel(string model) => SetModelOverride(model);
 
     // retry settings
     private int _maxRetries;
@@ -77,7 +81,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
                 SettingKeys.Translation.LanguageCodeFormat
             ]);
 
-            _model = settings[SettingKeys.Translation.XAi.Model];
+            _model = ResolveModel(settings[SettingKeys.Translation.XAi.Model]);
             _apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.XAi.ApiKey);
             _requestTemplate = !string.IsNullOrEmpty(settings[SettingKeys.Translation.XAi.RequestTemplate])
                 ? settings[SettingKeys.Translation.XAi.RequestTemplate]
@@ -144,7 +148,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
                 var replacements = GetReplacements(_model!, text, contextLinesBefore, contextLinesAfter);
                 return await CompleteWithXAiApi(replacements, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -161,6 +165,12 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -194,7 +204,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
                 var replacements = GetProofreadReplacements(_model!, sourceText, translatedText);
                 return await CompleteWithXAiApi(replacements, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -211,6 +221,12 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -238,17 +254,13 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
         var response = await _httpClient.PostAsync(requestUrl, requestContent, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
-            {
-                throw new HttpRequestException(
-                    $"xAI returned {response.StatusCode}", null, response.StatusCode);
-            }
-
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError(
                 "xAI API request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode, responseContent);
-            throw new TranslationException(
+            throw HttpFailure.FromResponse(
+                "xAI",
+                response,
                 $"xAI API request failed with status {response.StatusCode}: {responseContent}");
         }
 
@@ -288,7 +300,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
             {
                 return await TranslateBatchWithXAiApi(subtitleBatch, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -305,6 +317,12 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -379,18 +397,13 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
 
         if (!response.IsSuccessStatusCode)
         {
-            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
-            {
-                throw new HttpRequestException(
-                    $"Batch translation using xAI API failed with {response.StatusCode}.",
-                    null, response.StatusCode);
-            }
-
             var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError(
                 "xAI batch API request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode, responseContent);
-            throw new TranslationException(
+            throw HttpFailure.FromResponse(
+                "xAI",
+                response,
                 $"xAI batch API request failed with status {response.StatusCode}: {responseContent}");
         }
 
@@ -416,7 +429,7 @@ public class XAiService : BaseLanguageService, ITranslationService, IBatchTransl
                 throw new TranslationException("Failed to deserialize translated subtitles");
             }
 
-            return MergeByPosition(translatedItems);
+            return BatchResponseMerger.MergeByPosition(translatedItems);
         }
         catch (JsonException ex)
         {

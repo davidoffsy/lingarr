@@ -1,4 +1,4 @@
-﻿using Hangfire;
+using Hangfire;
 using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
 using Lingarr.Server.Hubs;
@@ -6,6 +6,7 @@ using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Jobs;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.Chain;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
@@ -18,7 +19,7 @@ public class SettingChangedListener
     private readonly ILogger<SettingChangedListener> _logger;
     private static readonly HashSet<string> BatchServiceTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "openai", "anthropic", "localai", "gemini", "mistral", "xai"
+        "openai", "anthropic", "localai", "custom", "gemini", "mistral", "xai"
     };
 
     public SettingChangedListener(IServiceProvider serviceProvider,
@@ -234,8 +235,10 @@ public class SettingChangedListener
 
                 case "ServiceType":
                     var serviceTypeRaw = await settingService.GetSetting(SettingKeys.Translation.ServiceType);
-                    var primary = TranslationServices.Parse(serviceTypeRaw)[0];
-                    if (!BatchServiceTypes.Contains(primary))
+                    var chain = TranslationChainResolver.Resolve(serviceTypeRaw).Entries;
+                    // Batch translation is offered whenever any configured candidate can batch; the
+                    // translator picks the first batch-capable candidate per language pair.
+                    if (!chain.Any(entry => BatchServiceTypes.Contains(entry.ProviderKey)))
                     {
                         await settingService.SetSetting(SettingKeys.Translation.UseBatchTranslation, "false");
                     }

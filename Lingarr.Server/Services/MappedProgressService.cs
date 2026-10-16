@@ -38,8 +38,9 @@ public sealed class MappedProgressService : IProgressService
         string source,
         string target,
         string? service = null,
-        LanguagePair? pair = null)
-        => _inner.EmitLine(request, position, source, target, service, pair);
+        LanguagePair? pair = null,
+        string? model = null)
+        => _inner.EmitLine(request, position, source, target, service, pair, model);
 
     public Task EmitLines(TranslationRequest request, List<TranslatedLineData> lines)
         => _inner.EmitLines(request, lines);
@@ -49,6 +50,7 @@ public sealed class MappedProgressService : IProgressService
         int position,
         string source,
         string target,
-        string? service)
-        => _inner.EmitProofreadLine(request, position, source, target, service);
+        string? service,
+        string? model = null)
+        => _inner.EmitProofreadLine(request, position, source, target, service, model);
 }

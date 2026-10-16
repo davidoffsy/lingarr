@@ -13,6 +13,8 @@ using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.Attribution;
+using Lingarr.Server.Services.Translation.Chain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Extensions;
 using SubtitleValidationOptions = Lingarr.Server.Models.SubtitleValidationOptions;
@@ -134,8 +136,9 @@ public class TranslationJob
                 SettingKeys.Translation.UseSubtitleTagging,
                 SettingKeys.Translation.SubtitleTag
             ]);
-            var serviceNames = TranslationServices.Parse(settings[SettingKeys.Translation.ServiceType]);
-            var serviceType = serviceNames[0];
+            var chainEntries = TranslationChainResolver
+                .Resolve(settings[SettingKeys.Translation.ServiceType], _logger)
+                .Entries;
             var stripSubtitleFormatting = settings[SettingKeys.Translation.StripSubtitleFormatting] == "true";
             var preserveLineBreaks = settings[SettingKeys.Translation.PreserveLineBreaks] == "true";
             var addTranslatorInfo = settings[SettingKeys.Translation.AddTranslatorInfo] == "true";
@@ -199,12 +202,12 @@ public class TranslationJob
             }
 
             // translate subtitles
-            var services = _translationServiceFactory.CreateTranslationServices(serviceNames);
+            var services = _translationServiceFactory.CreateTranslationServices(chainEntries);
             if (services.Count == 0)
             {
-                throw new TranslationException($"No usable translation services configured: [{string.Join(", ", serviceNames)}]");
+                throw new TranslationException(
+                    $"No usable translation services configured: [{TranslationChainEntry.DescribeAll(chainEntries)}]");
             }
-            var translationService = services[0].Service;
             IProgressService translateProgress = _progressService;
             if (isEmbeddedExtract)
             {
@@ -222,10 +225,10 @@ public class TranslationJob
             // Group by Position and keep the most recent row in case the same position was used more than once.
             var persistedLines = (await _dbContext.TranslationRequestLines
                     .Where(line => line.TranslationRequestId == request.Id)
-                    .Select(line => new { line.Id, line.Position, line.Target })
+                    .Select(line => new { line.Id, line.Position, line.Target, line.Service, line.Model })
                     .ToListAsync(cancellationToken))
                 .GroupBy(line => line.Position)
-                .ToDictionary(g => g.Key, g => g.OrderByDescending(l => l.Id).First().Target);
+                .ToDictionary(g => g.Key, g => g.OrderByDescending(l => l.Id).First());
 
             if (persistedLines.Count > 0)
             {
@@ -235,11 +238,21 @@ public class TranslationJob
 
                 foreach (var subtitle in subtitles)
                 {
-                    if (persistedLines.TryGetValue(subtitle.Position, out var target))
+                    if (persistedLines.TryGetValue(subtitle.Position, out var line))
                     {
-                        subtitle.TranslatedLines = [target];
+                        subtitle.TranslatedLines = [line.Target];
                     }
                 }
+
+                // Attribution of the lines an earlier run translated, so the translator tag and the
+                // source statistics cover the whole file instead of only this run's lines.
+                translator.SeedAttribution(persistedLines
+                    .Where(line => !string.IsNullOrEmpty(line.Value.Service))
+                    .ToDictionary(
+                        line => line.Key,
+                        line => new TranslationAttribution(
+                            new TranslationSource(line.Value.Service!, line.Value.Model),
+                            null)));
             }
 
             List<SubtitleItem> translatedSubtitles;
@@ -288,9 +301,21 @@ public class TranslationJob
                 translatedSubtitles = _subtitleService.FixOverlappingSubtitles(translatedSubtitles);
             }
 
+            // statistics tracking, only count subtitles translated by this run
+            // Computed before AddTranslatorInfo: the intro line is written to the subtitle file but was
+            // never attributed, so counting it would add a line the sources do not cover and break the
+            // invariant that the line totals match the attributed per-source line counts.
+            var newlyTranslatedSubtitles = persistedLines.Count == 0
+                ? translatedSubtitles
+                : translatedSubtitles.Where(s => !persistedLines.ContainsKey(s.Position)).ToList();
+            await _statisticsService.UpdateTranslationStatisticsFromSubtitles(
+                request,
+                translator.SourceSummaryOf(newlyTranslatedSubtitles.Select(subtitle => subtitle.Position)),
+                newlyTranslatedSubtitles);
+
             if (addTranslatorInfo)
             {
-                _subtitleService.AddTranslatorInfo(serviceType, translatedSubtitles, translationService);
+                _subtitleService.AddTranslatorInfo(translator.SourceSummary, translatedSubtitles);
             }
 
             if (stripSubtitleFormatting)
@@ -301,13 +326,6 @@ public class TranslationJob
                     format.Styles = [];
                 }
             }
-
-            // statistics tracking, only count subtitles translated by this run
-            var newlyTranslatedSubtitles = persistedLines.Count == 0
-                ? translatedSubtitles
-                : translatedSubtitles.Where(s => !persistedLines.ContainsKey(s.Position)).ToList();
-            await _statisticsService.UpdateTranslationStatisticsFromSubtitles(
-                request, serviceType, translationService.ModelName, newlyTranslatedSubtitles);
 
             var subtitleTag = "";
             if (settings[SettingKeys.Translation.UseSubtitleTagging] == "true")

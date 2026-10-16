@@ -16,6 +16,7 @@ import { telemetryService } from '@/services/telemetryService'
 import { logsService } from '@/services/logsService'
 import { requestTemplateService } from '@/services/requestTemplateService'
 import { pluginService } from '@/services/pluginService'
+import { translationChainService } from '@/services/translationChainService'
 import { plexService } from '@/services/plexService'
 import { webhookService } from '@/services/webhookService'
 
@@ -58,6 +59,7 @@ const services = (axios: AxiosStatic): Services => ({
     telemetry: telemetryService(axios),
     requestTemplate: requestTemplateService(axios),
     plugin: pluginService(axios),
+    translationChain: translationChainService(axios),
     plex: plexService(axios),
     webhook: webhookService(axios)
 })

@@ -20,6 +20,8 @@ using Lingarr.Server.Models;
 using Lingarr.Server.Models.Batch.Response;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
+using Lingarr.Server.Services.Translation.Attribution;
+using Lingarr.Server.Services.Translation.Chain;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Data.Sqlite;
@@ -107,12 +109,13 @@ public class TranslateControllerContentTests : IDisposable
 
         _translationServiceFactoryMock = new Mock<ITranslationServiceFactory>();
         _translationServiceFactoryMock
-            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<string>>()))
-            .Returns((IReadOnlyList<string> serviceTypes) => serviceTypes
-                .Select(serviceType => new TranslationServiceEntry(
-                    serviceType,
+            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<TranslationChainEntry>>()))
+            .Returns((IReadOnlyList<TranslationChainEntry> entries) => entries
+                .Select(entry => new TranslationServiceEntry(
+                    entry.ProviderKey,
                     _translationServiceMock.Object,
-                    (IBatchTranslationService)_translationServiceMock.Object))
+                    (IBatchTranslationService)_translationServiceMock.Object,
+                    entry.ModelKey))
                 .ToList());
 
         _settings = new Dictionary<string, string>
@@ -145,7 +148,8 @@ public class TranslateControllerContentTests : IDisposable
                 It.IsAny<string>(),
                 It.IsAny<string>(),
                 It.IsAny<string?>(),
-                It.IsAny<LanguagePair?>()))
+                It.IsAny<LanguagePair?>(),
+                It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
         _progressServiceMock
             .Setup(progressService => progressService.EmitLines(
@@ -157,8 +161,7 @@ public class TranslateControllerContentTests : IDisposable
         _statisticsServiceMock
             .Setup(statisticsService => statisticsService.UpdateTranslationStatisticsFromLines(
                 It.IsAny<TranslationRequest>(),
-                It.IsAny<string>(),
-                It.IsAny<string?>(),
+                It.IsAny<TranslationSourceSummary>(),
                 It.IsAny<BatchTranslatedLine[]>()))
             .ReturnsAsync(0);
 
@@ -267,8 +270,10 @@ public class TranslateControllerContentTests : IDisposable
         Assert.NotNull(translationRequest.CompletedAt);
         _statisticsServiceMock.Verify(statisticsService => statisticsService.UpdateTranslationStatisticsFromLines(
             It.IsAny<TranslationRequest>(),
-            "openai",
-            "test-model",
+            It.Is<TranslationSourceSummary>(sources => sources.Counts.Count == 1
+                && sources.Counts[0].Source.Provider == "openai"
+                && sources.Counts[0].Source.Model == "test-model"
+                && sources.Counts[0].Lines == 2),
             It.Is<BatchTranslatedLine[]>(lines => lines.Length == 2)), Times.Once);
         _progressServiceMock.Verify(
             progressService => progressService.Emit(It.IsAny<TranslationRequest>(), 100),
@@ -321,8 +326,8 @@ public class TranslateControllerContentTests : IDisposable
         await _controller.TranslateContent(NewContent("First line", "Second line"), CancellationToken.None);
 
         _translationServiceFactoryMock.Verify(
-            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<string>>(serviceTypes =>
-                serviceTypes.Count == 1 && serviceTypes[0] == SettingKeys.Translation.DefaultServiceType)),
+            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<TranslationChainEntry>>(entries =>
+                entries.Count == 1 && entries[0].ProviderKey == SettingKeys.Translation.DefaultServiceType)),
             Times.Once);
     }
 
@@ -415,7 +420,7 @@ public class TranslateControllerContentTests : IDisposable
     }
 
     [Fact]
-    public async Task TranslateContent_PrimaryServiceFails_FallsBackToNextServiceButReportsPrimary()
+    public async Task TranslateContent_PrimaryServiceFails_FallsBackToNextServiceAndReportsThatService()
     {
         _settings[SettingKeys.Translation.ServiceType] = "[\"openai\",\"deepl\"]";
 
@@ -439,11 +444,11 @@ public class TranslateControllerContentTests : IDisposable
             .ThrowsAsync(new InvalidOperationException("provider is down"));
 
         _translationServiceFactoryMock
-            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<string>>()))
-            .Returns((IReadOnlyList<string> serviceTypes) => new List<TranslationServiceEntry>
+            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<TranslationChainEntry>>()))
+            .Returns((IReadOnlyList<TranslationChainEntry> entries) => new List<TranslationServiceEntry>
             {
-                new(serviceTypes[0], failingServiceMock.Object, (IBatchTranslationService)failingServiceMock.Object),
-                new(serviceTypes[1], _translationServiceMock.Object, (IBatchTranslationService)_translationServiceMock.Object)
+                new(entries[0].ProviderKey, failingServiceMock.Object, (IBatchTranslationService)failingServiceMock.Object, entries[0].ModelKey),
+                new(entries[1].ProviderKey, _translationServiceMock.Object, (IBatchTranslationService)_translationServiceMock.Object, entries[1].ModelKey)
             });
 
         var response = await _controller.TranslateContent(
@@ -455,11 +460,14 @@ public class TranslateControllerContentTests : IDisposable
             ["batch:First line", "batch:Second line"],
             results.OrderBy(result => result.Position).Select(result => result.Line));
 
-        // Statistics are keyed off the first configured service, not the one that did the work.
+        // Statistics are attributed to the provider that really translated the lines, not to the
+        // first one that was configured.
         _statisticsServiceMock.Verify(statisticsService => statisticsService.UpdateTranslationStatisticsFromLines(
             It.IsAny<TranslationRequest>(),
-            "openai",
-            "failing-model",
+            It.Is<TranslationSourceSummary>(sources => sources.Counts.Count == 1
+                && sources.Counts[0].Source.Provider == "deepl"
+                && sources.Counts[0].Source.Model == "test-model"
+                && sources.Counts[0].Lines == 2),
             It.IsAny<BatchTranslatedLine[]>()), Times.Once);
     }
 
@@ -511,9 +519,9 @@ public class TranslateControllerContentTests : IDisposable
             .ReturnsAsync((string text, string _, string _, List<string>? _, List<string>? _, CancellationToken _) =>
                 $"line:{text}");
         _translationServiceFactoryMock
-            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<string>>()))
-            .Returns((IReadOnlyList<string> serviceTypes) => serviceTypes
-                .Select(serviceType => new TranslationServiceEntry(serviceType, plainServiceMock.Object, null))
+            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<TranslationChainEntry>>()))
+            .Returns((IReadOnlyList<TranslationChainEntry> entries) => entries
+                .Select(entry => new TranslationServiceEntry(entry.ProviderKey, plainServiceMock.Object, null, entry.ModelKey))
                 .ToList());
 
         var response = await _controller.TranslateContent(
@@ -587,7 +595,7 @@ public class TranslateControllerContentTests : IDisposable
     public async Task TranslateContent_NoUsableServices_ReturnsServerError()
     {
         _translationServiceFactoryMock
-            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<string>>()))
+            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<TranslationChainEntry>>()))
             .Returns(new List<TranslationServiceEntry>());
 
         var response = await _controller.TranslateContent(

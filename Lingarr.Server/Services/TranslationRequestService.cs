@@ -19,6 +19,8 @@ using Lingarr.Server.Models.TranslationRequests;
 using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Subtitle;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.Attribution;
+using Lingarr.Server.Services.Translation.Chain;
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -92,7 +94,8 @@ public class TranslationRequestService : ITranslationRequestService
                 Position = translationRequestLine.Position,
                 Source = translationRequestLine.Source,
                 Target = translationRequestLine.Target,
-                Service = translationRequestLine.Service
+                Service = translationRequestLine.Service,
+                Model = translationRequestLine.Model
             })
             .ToListAsync();
         
@@ -519,11 +522,11 @@ public class TranslationRequestService : ITranslationRequestService
     /// <inheritdoc />
     public async Task<ProofreadStatusResponse> GetProofreadStatus()
     {
-        var entry = await ResolveProofreadService();
+        var candidates = await ResolveProofreadCandidates();
         return new ProofreadStatusResponse
         {
-            Supported = entry != null,
-            Service = entry?.Name
+            Supported = candidates.Count > 0,
+            Service = candidates.Count > 0 ? candidates[0].Describe() : null
         };
     }
 
@@ -532,18 +535,21 @@ public class TranslationRequestService : ITranslationRequestService
         ProofreadLineRequest proofreadLineRequest,
         CancellationToken cancellationToken)
     {
-        var entry = await ResolveProofreadService();
-        if (entry == null)
+        var candidates = await ResolveProofreadCandidates();
+        if (candidates.Count == 0)
         {
             return null;
         }
 
-        return await entry.Value.Service.ProofreadAsync(
+        var result = await ProofreadCandidateRunner.ProofreadAsync(
+            candidates,
             proofreadLineRequest.SourceLine,
             proofreadLineRequest.TranslatedLine,
             proofreadLineRequest.SourceLanguage,
             proofreadLineRequest.TargetLanguage,
+            _logger,
             cancellationToken);
+        return result?.Revision;
     }
 
     /// <inheritdoc />
@@ -618,16 +624,30 @@ public class TranslationRequestService : ITranslationRequestService
         }
         target.TranslatedLines = [applyRequest.Target];
 
-        var service = applyRequest.Origin == ProofreadLineOrigin.Manual
-            ? ManualService
-            : (await ResolveProofreadService())?.Name;
+        // Attribution written here must use the same shape as the translation path (provider in the
+        // service column, model in the model column): the stored service is reused verbatim as the
+        // statistics provider key and in the subtitle translator tag, so a rendered value such as
+        // "custom (model-b)" would become a pseudo provider.
+        TranslationSource? source;
+        if (applyRequest.Origin == ProofreadLineOrigin.Manual)
+        {
+            source = new TranslationSource(ManualService, null);
+        }
+        else
+        {
+            // Same candidate as ProofreadJob would have used: the first proofread-capable one of the
+            // configured chain. Without a candidate the line keeps the provider that translated it.
+            var candidates = await ResolveProofreadCandidates();
+            source = candidates.Count == 0 ? null : TranslationSource.FromCandidate(candidates[0]);
+        }
 
         await _progressService.EmitProofreadLine(
             translationRequest,
             applyRequest.Position,
             sourceText,
             applyRequest.Target,
-            service);
+            source?.Provider,
+            source?.Model);
 
         await _subtitleService.WriteSubtitles(
             translationRequest.TranslatedSubtitle,
@@ -637,22 +657,16 @@ public class TranslationRequestService : ITranslationRequestService
         return $"Line {applyRequest.Position} of translation request with id {applyRequest.Id} has been updated";
     }
 
-    private async Task<(string Name, IProofreadService Service)?> ResolveProofreadService()
+    /// <summary>
+    /// Proofread-capable candidates of the configured chain, in the order they should be tried.
+    /// </summary>
+    private async Task<IReadOnlyList<TranslationServiceEntry>> ResolveProofreadCandidates()
     {
-        var serviceNames = TranslationServices.Parse(
-            await _settingService.GetSetting(SettingKeys.Translation.ServiceType),
-            _logger);
-        var services = _translationServiceFactory.CreateTranslationServices(serviceNames);
-
-        foreach (var entry in services)
-        {
-            if (entry.Service is IProofreadService proofreadService)
-            {
-                return (entry.Name, proofreadService);
-            }
-        }
-
-        return null;
+        var entries = TranslationChainResolver
+            .Resolve(await _settingService.GetSetting(SettingKeys.Translation.ServiceType), _logger)
+            .Entries;
+        return ProofreadCandidateRunner.Candidates(
+            _translationServiceFactory.CreateTranslationServices(entries));
     }
 
     /// <inheritdoc />
@@ -852,15 +866,15 @@ public class TranslationRequestService : ITranslationRequestService
             ]);
             var preserveLineBreaks = settings[SettingKeys.Translation.PreserveLineBreaks] == "true";
             var stripSubtitleFormatting = settings[SettingKeys.Translation.StripSubtitleFormatting] == "true";
-            var serviceNames = TranslationServices.Parse(settings[SettingKeys.Translation.ServiceType]);
-            var serviceType = serviceNames[0];
-            var services = _translationServiceFactory.CreateTranslationServices(serviceNames);
+            var chainEntries = TranslationChainResolver
+                .Resolve(settings[SettingKeys.Translation.ServiceType], _logger)
+                .Entries;
+            var services = _translationServiceFactory.CreateTranslationServices(chainEntries);
             if (services.Count == 0)
             {
                 throw new TranslationException(
-                    $"No usable translation services configured: [{string.Join(", ", serviceNames)}]");
+                    $"No usable translation services configured: [{TranslationChainEntry.DescribeAll(chainEntries)}]");
             }
-            var translationService = services[0].Service;
 
             // Skip if an active content-translation row for this media+target already exists.
             var existingId = await _dbContext.TranslationRequests
@@ -933,7 +947,8 @@ public class TranslationRequestService : ITranslationRequestService
 
                 _logger.LogInformation("Batch translation completed successfully. Processed {resultCount} translated lines", results.Length);
 
-                await HandleAsyncTranslationCompletion(translationRequest, serviceType, translationService, results, cancellationToken);
+                await HandleAsyncTranslationCompletion(
+                    translationRequest, subtitleTranslator.SourceSummary, results, cancellationToken);
                 return results;
             }
             else
@@ -987,7 +1002,8 @@ public class TranslationRequestService : ITranslationRequestService
 
                 _logger.LogInformation("Individual line translation completed. Processed {resultCount} lines", results.Length);
 
-                await HandleAsyncTranslationCompletion(translationRequest, serviceType, translationService, results, cancellationToken);
+                await HandleAsyncTranslationCompletion(
+                    translationRequest, subtitleTranslator.SourceSummary, results, cancellationToken);
                 return results;
             }
         }
@@ -1060,12 +1076,11 @@ public class TranslationRequestService : ITranslationRequestService
     /// </summary>
     private async Task HandleAsyncTranslationCompletion(
         TranslationRequest translationRequest,
-        string serviceType,
-        ITranslationService translationService,
+        TranslationSourceSummary sources,
         BatchTranslatedLine[] results,
         CancellationToken cancellationToken)
     {
-        await _statisticsService.UpdateTranslationStatisticsFromLines(translationRequest, serviceType, translationService.ModelName, results);
+        await _statisticsService.UpdateTranslationStatisticsFromLines(translationRequest, sources, results);
 
         var now = DateTimeOffset.UtcNow;
         await _dbContext.TranslationRequests

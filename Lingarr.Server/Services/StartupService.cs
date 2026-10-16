@@ -4,6 +4,7 @@ using Lingarr.Core.Entities;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Services.Plugins;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.Chain;
 using Microsoft.EntityFrameworkCore;
 
 namespace Lingarr.Server.Services;
@@ -163,9 +164,12 @@ public class StartupService : IHostedService
     }
 
     /// <summary>
-    /// Ensures the service_type setting is stored as a JSON array. The setting historically held a
-    /// single service identifier; on every startup we promote legacy single-value rows (existing
-    /// installs and fresh seeds alike) to the ordered-list form used by the rest of the system.
+    /// Ensures the service_type setting is stored in the canonical chain form. The setting historically
+    /// held a single service identifier; on every startup we promote legacy single-value rows (existing
+    /// installs and fresh seeds alike) to the ordered candidate form used by the rest of the system.
+    /// Values that are already chains are left untouched: existing arrays and object arrays stay as
+    /// configured and are read through <see cref="TranslationChainResolver"/>, so no historical value
+    /// has to be rewritten.
     /// </summary>
     /// <param name="dbContext">The database context used to access and update settings.</param>
     private async Task NormaliseServiceType(LingarrDbContext dbContext)
@@ -183,10 +187,10 @@ public class StartupService : IHostedService
             return;
         }
 
-        setting.Value = TranslationServices.Normalise(setting.Value, _logger);
+        setting.Value = TranslationChainResolver.Normalise(setting.Value, _logger);
         await dbContext.SaveChangesAsync();
 
-        _logger.LogInformation("Normalised service_type setting to JSON-array.");
+        _logger.LogInformation("Normalised service_type setting to the translation chain form.");
     }
 
     /// <summary>
@@ -260,6 +264,14 @@ public class StartupService : IHostedService
             { "LOCAL_AI_ENDPOINT", SettingKeys.Translation.LocalAi.Endpoint },
             { "LOCAL_AI_PROTOCOL", SettingKeys.Translation.LocalAi.Protocol },
 
+            // Custom deliberately keeps its own CUSTOM_* names instead of reusing LOCAL_AI_*: the two
+            // providers can be configured side by side in one translation chain, so an environment
+            // variable for one must never overwrite the address, key or model of the other.
+            { "CUSTOM_ENDPOINT", SettingKeys.Translation.Custom.Endpoint },
+            { "CUSTOM_MODEL", SettingKeys.Translation.Custom.Model },
+            { "CUSTOM_API_KEY", SettingKeys.Translation.Custom.ApiKey },
+            { "CUSTOM_CHAT_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.ChatRequestTemplate },
+
             { "GEMINI_MODEL", SettingKeys.Translation.Gemini.Model },
             { "GEMINI_API_KEY", SettingKeys.Translation.Gemini.ApiKey },
 
@@ -288,7 +300,7 @@ public class StartupService : IHostedService
             
             if (settingKey == SettingKeys.Translation.ServiceType)
             {
-                value = TranslationServices.Normalise(value, _logger);
+                value = TranslationChainResolver.Normalise(value, _logger);
             }
 
             var setting = await dbContext.Settings.FirstOrDefaultAsync(s => s.Key == settingKey);

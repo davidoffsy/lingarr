@@ -49,6 +49,35 @@ public class MigrationTests
     }
 
     [Fact]
+    public async Task Sqlite_CustomProviderSettingsAreSeeded()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"lingarr_test_{Guid.NewGuid()}.db");
+        try
+        {
+            var connectionString = $"Data Source={dbPath}";
+            RunMigrations(connectionString, "sqlite");
+
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+
+            await using var command = connection.CreateCommand();
+            foreach (var key in new[]
+                     {
+                         "custom_endpoint", "custom_model", "custom_api_key", "custom_chat_request_template"
+                     })
+            {
+                command.CommandText = $"SELECT value FROM settings WHERE key = '{key}'";
+                Assert.Equal(string.Empty, await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(dbPath)) File.Delete(dbPath);
+        }
+    }
+
+    [Fact]
     public async Task Sqlite_MigrationsRollBackSuccessfully()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"lingarr_test_{Guid.NewGuid()}.db");
@@ -67,12 +96,82 @@ public class MigrationTests
             await using var connection = new SqliteConnection(connectionString);
             await connection.OpenAsync(TestContext.Current.CancellationToken);
             Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+
+            // M0032 columns and M0031 keys must be gone, not just the version records.
+            Assert.False(await ColumnExistsAsync(connection, "translation_request_lines", "model"));
+            Assert.False(await ColumnExistsAsync(connection, "statistics", "lines_by_source_json"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_endpoint"));
         }
         finally
         {
             SqliteConnection.ClearAllPools();
             if (File.Exists(dbPath)) File.Delete(dbPath);
         }
+    }
+
+    [Fact]
+    public async Task Sqlite_CustomProviderSettingsSeedSkipsExistingKeys()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"lingarr_test_{Guid.NewGuid()}.db");
+        try
+        {
+            var connectionString = $"Data Source={dbPath}";
+            var services = new ServiceCollection();
+            services.AddFluentMigrator(connectionString, "sqlite");
+
+            var serviceProvider = services.BuildServiceProvider();
+            using var scope = serviceProvider.CreateScope();
+            var runner = scope.ServiceProvider.GetRequiredService<IMigrationRunner>();
+
+            // Apply everything before M0031, then simulate a database that already carries one of the
+            // seeded keys with a value of its own.
+            runner.MigrateUp(30);
+            await using (var seedConnection = new SqliteConnection(connectionString))
+            {
+                await seedConnection.OpenAsync(TestContext.Current.CancellationToken);
+                await using var command = seedConnection.CreateCommand();
+                command.CommandText =
+                    "INSERT INTO settings (key, value) VALUES ('custom_endpoint', 'http://hand-edited')";
+                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+
+            // Must not throw: settings.key is a primary key, a guarded seed skips the existing row.
+            runner.MigrateUp();
+
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var valueCommand = connection.CreateCommand();
+            valueCommand.CommandText = "SELECT value FROM settings WHERE key = 'custom_endpoint'";
+            Assert.Equal("http://hand-edited",
+                await valueCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(1L, await CountSettingsAsync(connection, "custom_endpoint"));
+
+            foreach (var key in new[] { "custom_model", "custom_api_key", "custom_chat_request_template" })
+            {
+                await using var command = connection.CreateCommand();
+                command.CommandText = $"SELECT value FROM settings WHERE key = '{key}'";
+                Assert.Equal(string.Empty, await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(dbPath)) File.Delete(dbPath);
+        }
+    }
+
+    private static async Task<bool> ColumnExistsAsync(SqliteConnection connection, string table, string column)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(1) FROM pragma_table_info('{table}') WHERE name = '{column}'";
+        return Convert.ToInt64(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken)) > 0;
+    }
+
+    private static async Task<long> CountSettingsAsync(SqliteConnection connection, string key)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM settings WHERE key = '{key}'";
+        return Convert.ToInt64(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

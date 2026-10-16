@@ -11,7 +11,7 @@ using Lingarr.Server.Services.Translation.Base;
 
 namespace Lingarr.Server.Services.Translation;
 
-public class DeepSeekService : BaseLanguageService, IProofreadService
+public class DeepSeekService : BaseLanguageService, IProofreadService, IModelOverridable
 {
     private string? _endpoint = "https://api.deepseek.com";
     private readonly HttpClient _httpClient;
@@ -25,6 +25,9 @@ public class DeepSeekService : BaseLanguageService, IProofreadService
 
     /// <inheritdoc />
     public override string? ModelName => _model;
+
+    /// <inheritdoc />
+    public void OverrideModel(string model) => SetModelOverride(model);
 
     public DeepSeekService(
         ISettingService settings,
@@ -65,7 +68,7 @@ public class DeepSeekService : BaseLanguageService, IProofreadService
                 SettingKeys.Translation.ProofreadUserPrompt,
                 SettingKeys.Translation.LanguageCodeFormat
             ]);
-            _model = settings[SettingKeys.Translation.DeepSeek.Model];
+            _model = ResolveModel(settings[SettingKeys.Translation.DeepSeek.Model]);
             _apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.DeepSeek.ApiKey);
             _requestTemplate = !string.IsNullOrEmpty(settings[SettingKeys.Translation.DeepSeek.RequestTemplate])
                 ? settings[SettingKeys.Translation.DeepSeek.RequestTemplate]
@@ -148,7 +151,9 @@ public class DeepSeekService : BaseLanguageService, IProofreadService
                 "DeepSeek API request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode, 
                 responseContent);
-            throw new TranslationException(
+            throw HttpFailure.FromResponse(
+                "DeepSeek",
+                response,
                 $"DeepSeek API request failed with status {response.StatusCode}: {responseContent}");
         }
 

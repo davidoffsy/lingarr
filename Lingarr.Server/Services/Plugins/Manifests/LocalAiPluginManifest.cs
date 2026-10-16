@@ -18,6 +18,8 @@ public sealed class LocalAiPluginManifest : IPluginManifest
 
     public bool SupportsConnectionTest => true;
 
+    public bool SupportsModelOverride => true;
+
     public IReadOnlyList<PluginSettingField> Settings { get; } =
     [
         new()

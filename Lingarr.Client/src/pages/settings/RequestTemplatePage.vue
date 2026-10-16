@@ -31,7 +31,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { IPluginSummary, SETTINGS } from '@/ts'
+import { chainProviders, IPluginSummary, SETTINGS } from '@/ts'
 import { useSettingStore } from '@/store/setting'
 import services from '@/services'
 import ButtonComponent from '@/components/common/ButtonComponent.vue'
@@ -52,14 +52,9 @@ const settingsLoaded = computed(
     () => settingsStore.getSetting(SETTINGS.SERVICE_TYPE) !== undefined
 )
 
-const configuredServices = computed<string[]>(() => {
-    const raw = (settingsStore.getSetting(SETTINGS.SERVICE_TYPE) as string) ?? '[]'
-    try {
-        return JSON.parse(raw) as string[]
-    } catch {
-        return []
-    }
-})
+const configuredServices = computed<string[]>(() =>
+    chainProviders(settingsStore.getSetting(SETTINGS.SERVICE_TYPE))
+)
 
 const tabOptions = computed(() => {
     const templated = new Map<string, IPluginSummary>()

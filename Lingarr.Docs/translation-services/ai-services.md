@@ -9,9 +9,9 @@ All AI services follow the same pattern: select the service, provide an API key,
 1. In the Lingarr web interface, go to **Settings > Services**.
 2. Select your AI service in the primary service dropdown, or click **Add fallback service** to use it as a fallback.
 3. Click the gear icon on the service row to configure its credentials.
-4. Enter the API key and choose a model. Self-hosted services such as [LocalAI](#localai) also ask for an endpoint.
+4. Enter the API key and choose a model. Self-hosted services such as [LocalAI](#localai) and [Custom](#custom) also ask for an endpoint.
 
-    When a service asks for an endpoint, LocalAI accepts a **base URL** or a full completion path.
+    When a service asks for an endpoint, LocalAI accepts a **base URL** or a full completion path, and [Custom](#custom) accepts a base URL or a full chat completions path.
     
     Choose a protocol in the LocalAI settings:
     
@@ -80,7 +80,7 @@ Batch translation does not use the user prompt. The batch is sent as the user me
 
 Proofreading re-examines a completed translation. For each subtitle line it sends the source line and the existing translation together to the AI service and asks for a corrected translation, without translating from scratch.
 
-Only services that implement proofreading offer it: OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI and LocalAI. LibreTranslate, DeepL, Google, Bing, Microsoft and Yandex do not support proofreading.
+Only services that implement proofreading offer it: OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, LocalAI and Custom. LibreTranslate, DeepL, Google, Bing, Microsoft and Yandex do not support proofreading.
 
 You can run it two ways:
 
@@ -109,7 +109,7 @@ These two settings apply to every AI service and are configured once under **Set
 | **Environment Variable** | **Description** |
 |--------------------------|-----------------|
 | `AI_MAX_TOKENS` | Maximum tokens for one completion (thinking plus the answer). Default `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. LocalAI generate (Ollama `/api/generate`) is not injected. |
-| `AI_THINKING` | Chain-of-thought control. Default `auto`. Applied only to LocalAI OpenAI-compatible chat. `auto` sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
+| `AI_THINKING` | Chain-of-thought control. Default `auto`. Applied only to OpenAI-compatible chat, which is LocalAI chat and Custom. `auto` sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
 
 ## Environment variables
 ### OpenAI
@@ -179,3 +179,34 @@ LocalAI works with Ollama or any other OpenAI-compatible model or router.
 | `LOCAL_AI_PROTOCOL` | `auto`, `openai_chat`, or `ollama_generate`. Default `auto` preserves the old URL-suffix behaviour.                       |
 | `AI_PROMPT` | The system prompt template.                                                                                               |
 | `AI_USER_PROMPT` | The user message template.                                                                                                |
+
+### Custom
+
+Custom talks to your own OpenAI-compatible gateway over the non-streaming Chat Completions protocol. It is a separate provider, not a mode of LocalAI: address, key, model and request template live under their own `custom_*` settings, so both providers can be configured and used in the same translation chain without sharing any of them. Existing `localai` configurations keep working unchanged — nothing is migrated automatically — while new OpenAI-compatible gateways belong on Custom.
+
+| **Environment Variable** | **Description**                                                                                                           |
+|--------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| `CUSTOM_ENDPOINT` | Base URL or full chat completions path. Example: `http://localhost:8000/v1` or `https://gateway.example.com/v1/chat/completions`. |
+| `CUSTOM_MODEL` | The model to use. Load the gateway's model list with **Test connection**, or type a model id.                               |
+| `CUSTOM_API_KEY` | Bearer token, optional. Only needed when the gateway requires authentication. Stored encrypted.                            |
+| `CUSTOM_CHAT_REQUEST_TEMPLATE` | The request template for this provider, stored separately from the LocalAI and OpenAI templates.                          |
+| `AI_PROMPT` | The system prompt template.                                                                                               |
+| `AI_USER_PROMPT` | The user message template.                                                                                                |
+
+As everywhere else, each variable also accepts the `_FILE` variant, see [Configuration](/getting-started/configuration).
+
+**Addresses.** Custom looks at what you enter and resolves the chat completions URL from it:
+
+- a base URL such as `http://localhost:8000` becomes `http://localhost:8000/v1/chat/completions`;
+- a URL that already ends in `/v1`, such as `http://localhost:8000/v1`, becomes the same `.../v1/chat/completions`;
+- a full path such as `https://gateway.example.com/v1/chat/completions` is used as it is.
+
+Other known API paths (`/chat/completions`, `/completions`, `/models`, and Ollama's `/api/generate` and `/api/tags`) are recognised and replaced by the chat completions path, so a URL copied from another client does not have to be trimmed by hand. Custom never guesses a protocol and never streams: every request is a non-streaming Chat Completions call, so gateway settings that force SSE are not supported here.
+
+**Authentication.** `CUSTOM_API_KEY` is optional. When it is set, the request carries `Authorization: Bearer <key>`; when it is empty, the request is sent without one and Lingarr warns that gateways requiring authentication will reject it.
+
+**Models.** **Test connection** requests the model catalogue at the `/v1/models` path of the same address, with the same bearer token, and offers the result in the model dropdown. Gateways without a `/models` endpoint are supported: the model field accepts a typed id, and a failed model list does not mean the gateway cannot translate.
+
+**Request template.** The default body is the OpenAI Chat template. It is stored under `custom_chat_request_template`, independently of `local_ai_chat_request_template` and `openai_request_template`, and is edited under **Settings > Services > Request Settings**.
+
+**Translation chain.** A chain entry is one provider plus an optional model, so `custom` can appear more than once with a different model on every line. When a gateway answers `401`, Lingarr treats the credentials as wrong for that gateway and skips its remaining models before trying the next provider in the chain; a missing model, a rate limit or a timeout moves on after the normal retries. When the lines of one subtitle end up translated by more than one model, the translator info and the per-line view report the mixed sources.

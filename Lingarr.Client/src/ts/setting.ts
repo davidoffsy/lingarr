@@ -33,6 +33,8 @@ export const SETTINGS = {
     LOCAL_AI_ENDPOINT: 'local_ai_endpoint',
     LOCAL_AI_MODEL: 'local_ai_model',
     LOCAL_AI_PROTOCOL: 'local_ai_protocol',
+    CUSTOM_ENDPOINT: 'custom_endpoint',
+    CUSTOM_MODEL: 'custom_model',
     GEMINI_MODEL: 'gemini_model',
     DEEPSEEK_MODEL: 'deepseek_model',
     MISTRAL_MODEL: 'mistral_model',
@@ -81,6 +83,7 @@ export const SETTINGS = {
     ANTHROPIC_REQUEST_TEMPLATE: 'anthropic_request_template',
     LOCAL_AI_CHAT_REQUEST_TEMPLATE: 'local_ai_chat_request_template',
     LOCAL_AI_GENERATE_REQUEST_TEMPLATE: 'local_ai_generate_request_template',
+    CUSTOM_CHAT_REQUEST_TEMPLATE: 'custom_chat_request_template',
     DEEPSEEK_REQUEST_TEMPLATE: 'deepseek_request_template',
     GEMINI_REQUEST_TEMPLATE: 'gemini_request_template',
     MISTRAL_REQUEST_TEMPLATE: 'mistral_request_template',
@@ -118,6 +121,8 @@ export interface ISettings {
     local_ai_endpoint: string
     local_ai_model: string
     local_ai_protocol: string
+    custom_endpoint: string
+    custom_model: string
     gemini_model: string
     deepseek_model: string
     mistral_model: string
@@ -166,6 +171,7 @@ export interface ISettings {
     anthropic_request_template: string
     local_ai_chat_request_template: string
     local_ai_generate_request_template: string
+    custom_chat_request_template: string
     deepseek_request_template: string
     gemini_request_template: string
     mistral_request_template: string
@@ -197,6 +203,7 @@ export const ENCRYPTED_SETTINGS = {
     DEEPL_API_KEY: 'deepl_api_key',
     LIBRETRANSLATE_API_KEY: 'libretranslate_api_key',
     LOCAL_AI_API_KEY: 'local_ai_api_key',
+    CUSTOM_API_KEY: 'custom_api_key',
     PLEX_WEBHOOK_SECRET: 'plex_webhook_secret'
 } as const
 
@@ -213,6 +220,7 @@ export interface IEncryptedSettings {
     deepl_api_key: string
     libretranslate_api_key: string
     local_ai_api_key: string
+    custom_api_key: string
     plex_webhook_secret: string
 }
 
@@ -221,6 +229,7 @@ export const SERVICE_TYPE = {
     OPENAI: 'openai',
     ANTHROPIC: 'anthropic',
     LOCALAI: 'localai',
+    CUSTOM: 'custom',
     DEEPL: 'deepl',
     GEMINI: 'gemini',
     DEEPSEEK: 'deepseek',

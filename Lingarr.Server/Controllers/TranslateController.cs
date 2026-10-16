@@ -1,4 +1,4 @@
-﻿using Lingarr.Contracts.Models;
+using Lingarr.Contracts.Models;
 using Lingarr.Core.Configuration;
 using Lingarr.Server.Attributes;
 using Microsoft.AspNetCore.Mvc;
@@ -10,6 +10,7 @@ using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Models.Api;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.Chain;
 
 namespace Lingarr.Server.Controllers;
 
@@ -86,9 +87,10 @@ public class TranslateController : ControllerBase
         [FromBody] TranslateAbleSubtitleLine translateAbleSubtitleLine,
         CancellationToken cancellationToken)
     {
-        var serviceType = TranslationServices.Parse(await _settings.GetSetting(SettingKeys.Translation.ServiceType))[0];
         var subtitleTranslator = new SubtitleTranslationService(
-            _translationServiceFactory.CreateTranslationServices([serviceType]),
+            _translationServiceFactory.CreateTranslationServices(
+                TranslationChainResolver.Resolve(
+                    await _settings.GetSetting(SettingKeys.Translation.ServiceType)).Entries),
             _logger);
 
         if (translateAbleSubtitleLine.SubtitleLine == "")

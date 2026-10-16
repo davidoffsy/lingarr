@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Lingarr.Contracts.Exceptions;
@@ -12,6 +13,7 @@ using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
+using Lingarr.Server.Services.Translation.Chain;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -33,6 +35,9 @@ public class TranslateControllerLineTests
         MatchTier? tier = MatchTier.Exact)
     {
         var translationServiceMock = new Mock<ITranslationService>();
+        // The factory only keeps a candidate that carries a model when its provider declares the
+        // optional override capability, so the harness services implement it like the real ones.
+        translationServiceMock.As<IModelOverridable>();
         translationServiceMock
             .Setup(translationService => translationService.GetLanguagePair(
                 It.IsAny<string>(),
@@ -68,20 +73,9 @@ public class TranslateControllerLineTests
 
         var translationServiceFactoryMock = new Mock<ITranslationServiceFactory>();
         translationServiceFactoryMock
-            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<string>>()))
-            .Returns((IReadOnlyList<string> serviceTypes) =>
-            {
-                var entries = new List<TranslationServiceEntry>
-                {
-                    new(serviceTypes[0], primaryServiceMock.Object, null)
-                };
-                for (var index = 1; index < serviceTypes.Count; index++)
-                {
-                    entries.Add(new TranslationServiceEntry(serviceTypes[index], fallbackServiceMock.Object, null));
-                }
-
-                return entries;
-            });
+            .Setup(factory => factory.CreateTranslationServices(It.IsAny<IReadOnlyList<TranslationChainEntry>>()))
+            .Returns((IReadOnlyList<TranslationChainEntry> entries) =>
+                BuildServices(entries, primaryServiceMock, fallbackServiceMock));
 
         return new Harness
         {
@@ -95,6 +89,37 @@ public class TranslateControllerLineTests
                 new LanguageCodeService(),
                 NullLogger<TranslateController>.Instance)
         };
+    }
+
+    /// <summary>
+    /// Stands in for the real factory: the first candidate is served by the primary service and the
+    /// rest by the fallback service. Candidates with a model override survive only when their service
+    /// declares the optional override capability, exactly like the production factory.
+    /// </summary>
+    private static List<TranslationServiceEntry> BuildServices(
+        IReadOnlyList<TranslationChainEntry> entries,
+        Mock<ITranslationService> primaryServiceMock,
+        Mock<ITranslationService> fallbackServiceMock)
+    {
+        var services = new List<TranslationServiceEntry>(entries.Count);
+        for (var index = 0; index < entries.Count; index++)
+        {
+            var service = index == 0 ? primaryServiceMock.Object : fallbackServiceMock.Object;
+            if (entries[index].ModelKey is { } model)
+            {
+                if (service is not IModelOverridable overridable)
+                {
+                    continue;
+                }
+
+                overridable.OverrideModel(model);
+            }
+
+            services.Add(new TranslationServiceEntry(
+                entries[index].ProviderKey, service, null, entries[index].ModelKey));
+        }
+
+        return services;
     }
 
     private static TranslateAbleSubtitleLine NewLine(
@@ -127,7 +152,7 @@ public class TranslateControllerLineTests
     }
 
     [Fact]
-    public async Task TranslateLine_ServiceTypeList_UsesPrimaryServiceOnly()
+    public async Task TranslateLine_ServiceTypeList_PassesEveryConfiguredCandidateToFactory()
     {
         var harness = CreateHarness("[\"openai\",\"deepl\"]");
 
@@ -135,8 +160,8 @@ public class TranslateControllerLineTests
 
         Assert.Equal("translated:Hello there", result);
         harness.TranslationServiceFactoryMock.Verify(
-            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<string>>(serviceTypes =>
-                serviceTypes.Count == 1 && serviceTypes[0] == "openai")),
+            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<TranslationChainEntry>>(entries =>
+                entries.Select(entry => entry.ProviderKey).SequenceEqual(new[] { "openai", "deepl" }))),
             Times.Once);
         harness.FallbackServiceMock.Verify(translationService => translationService.TranslateAsync(
             It.IsAny<string>(),
@@ -148,6 +173,51 @@ public class TranslateControllerLineTests
     }
 
     [Fact]
+    public async Task TranslateLine_ObjectChain_PassesProviderAndModelEntriesToFactory()
+    {
+        var harness = CreateHarness("[{\"provider\":\"openai\"},{\"provider\":\"deepl\",\"model\":\"x\"}]");
+
+        var result = await harness.Controller.TranslateLine(NewLine(), CancellationToken.None);
+
+        Assert.Equal("translated:Hello there", result);
+        harness.TranslationServiceFactoryMock.Verify(
+            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<TranslationChainEntry>>(entries =>
+                entries.Select(entry => entry.ProviderKey).SequenceEqual(new[] { "openai", "deepl" })
+                && !entries[0].HasModelOverride
+                && entries[1].ModelKey == "x")),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task TranslateLine_PrimaryServiceFails_UsesFallbackCandidate()
+    {
+        var failingServiceMock = CreateTranslationService();
+        failingServiceMock
+            .Setup(translationService => translationService.TranslateAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<List<string>?>(),
+                It.IsAny<List<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider is down"));
+        var harness = CreateHarness(
+            "[{\"provider\":\"openai\"},{\"provider\":\"deepl\",\"model\":\"x\"}]",
+            failingServiceMock);
+
+        var result = await harness.Controller.TranslateLine(NewLine(), CancellationToken.None);
+
+        Assert.Equal("fallback:Hello there", result);
+        harness.FallbackServiceMock.Verify(translationService => translationService.TranslateAsync(
+            "Hello there",
+            "en",
+            "es",
+            null,
+            null,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task TranslateLine_MissingServiceTypeSetting_UsesDefaultService()
     {
         var harness = CreateHarness(null);
@@ -155,8 +225,8 @@ public class TranslateControllerLineTests
         await harness.Controller.TranslateLine(NewLine(), CancellationToken.None);
 
         harness.TranslationServiceFactoryMock.Verify(
-            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<string>>(serviceTypes =>
-                serviceTypes.Count == 1 && serviceTypes[0] == SettingKeys.Translation.DefaultServiceType)),
+            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<TranslationChainEntry>>(entries =>
+                entries.Count == 1 && entries[0].ProviderKey == SettingKeys.Translation.DefaultServiceType)),
             Times.Once);
     }
 
@@ -168,8 +238,8 @@ public class TranslateControllerLineTests
         await harness.Controller.TranslateLine(NewLine(), CancellationToken.None);
 
         harness.TranslationServiceFactoryMock.Verify(
-            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<string>>(serviceTypes =>
-                serviceTypes.Count == 1 && serviceTypes[0] == SettingKeys.Translation.DefaultServiceType)),
+            factory => factory.CreateTranslationServices(It.Is<IReadOnlyList<TranslationChainEntry>>(entries =>
+                entries.Count == 1 && entries[0].ProviderKey == SettingKeys.Translation.DefaultServiceType)),
             Times.Once);
     }
 

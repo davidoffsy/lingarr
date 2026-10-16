@@ -3,9 +3,13 @@ using System.Net.Http.Headers;
 using System.Text;
 using Lingarr.Core;
 
-namespace Lingarr.Server.Services.Translation.LocalAi;
+namespace Lingarr.Server.Services.Translation.OpenAiCompatible;
 
-internal static class LocalAiHttp
+/// <summary>
+/// Shared HTTP plumbing for OpenAI-compatible providers (LocalAI chat, Custom chat,
+/// model catalogues). Ollama-native endpoints reuse the same request/header helpers.
+/// </summary>
+internal static class OpenAiCompatibleHttp
 {
     public static string UserAgent => $"{LingarrVersion.Name}/{LingarrVersion.Number}";
 
@@ -51,7 +55,4 @@ internal static class LocalAiHttp
             : sessionId.Trim();
         request.Headers.TryAddWithoutValidation(OpenCodeGoHeaders.SessionHeaderName, value);
     }
-
-    public static bool IsTransient(HttpStatusCode statusCode) =>
-        statusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable;
 }

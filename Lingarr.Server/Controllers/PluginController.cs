@@ -5,6 +5,7 @@ using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Models.Api;
 using Lingarr.Server.Services.Plugins;
+using Lingarr.Server.Services.Translation.Chain;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Lingarr.Server.Controllers;
@@ -59,6 +60,38 @@ public class PluginController : ControllerBase
         }
 
         return Ok(BuildResponse(plugin));
+    }
+
+    /// <summary>
+    /// Validates a translation chain before the settings UI stores it, using the same rules the
+    /// runtime applies: values that cannot be read (malformed JSON, unusable entries, an empty chain),
+    /// unknown providers, duplicate candidates, model overrides on providers that do not support them,
+    /// and values that fall back to the default provider.
+    /// </summary>
+    [HttpPost("translation-chain/validate")]
+    public ActionResult<TranslationChainValidationResponse> ValidateTranslationChain(
+        [FromBody] TranslationChainValidationRequest request)
+    {
+        var resolution = TranslationChainResolver.Resolve(request.ServiceType);
+        var knownProviders = _registry.All.Select(plugin => plugin.Manifest.Provider).ToList();
+        var overrideProviders = _registry.All
+            .Where(plugin => plugin.Manifest.SupportsModelOverride)
+            .Select(plugin => plugin.Manifest.Provider)
+            .ToList();
+
+        return Ok(new TranslationChainValidationResponse
+        {
+            ServiceType = TranslationChainSerializer.Serialize(resolution.Entries),
+            Candidates = resolution.Entries.Select(entry => entry.Describe()).ToList(),
+            UsedDefaultFallback = resolution.UsedDefaultFallback,
+            // Reading problems (for example an empty value) are reported next to the validation
+            // problems, so the client sees why its value is not the chain that would be used.
+            Issues = resolution.Issues
+                .Concat(TranslationChainValidator.Validate(resolution.Entries, knownProviders, overrideProviders))
+                .Select(issue => new TranslationChainValidationIssue(
+                    issue.Kind, issue.Index, issue.Message, issue.Value))
+                .ToList()
+        });
     }
 
     /// <summary>
@@ -189,7 +222,8 @@ public class PluginController : ControllerBase
             SourceFile = plugin.SourceFile,
             Settings = plugin.Manifest.Settings,
             HasRequestTemplate = plugin.Manifest.HasRequestTemplate,
-            SupportsConnectionTest = plugin.Manifest.SupportsConnectionTest
+            SupportsConnectionTest = plugin.Manifest.SupportsConnectionTest,
+            SupportsModelOverride = plugin.Manifest.SupportsModelOverride
         };
     }
 }

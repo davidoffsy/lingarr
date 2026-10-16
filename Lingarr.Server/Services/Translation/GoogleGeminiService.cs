@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text;
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
@@ -6,13 +5,15 @@ using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Models.Batch;
 using Lingarr.Contracts.Translation;
 using Lingarr.Core.Configuration;
+using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models.Integrations.Translation;
+using Lingarr.Server.Services.Translation.Batch;
 using Lingarr.Server.Services.Translation.Base;
 
 namespace Lingarr.Server.Services.Translation;
 
-public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService
+public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService, IModelOverridable
 {
     private readonly string? _endpoint = "https://generativelanguage.googleapis.com/v1beta";
     private readonly HttpClient _httpClient;
@@ -26,6 +27,9 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
 
     /// <inheritdoc />
     public override string? ModelName => _model;
+
+    /// <inheritdoc />
+    public void OverrideModel(string model) => SetModelOverride(model);
 
     // retry settings
     private int _maxRetries;
@@ -76,7 +80,7 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
                 SettingKeys.Translation.LanguageCodeFormat
             ]);
             _apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.Gemini.ApiKey);
-            _model = settings[SettingKeys.Translation.Gemini.Model];
+            _model = ResolveModel(settings[SettingKeys.Translation.Gemini.Model]);
             _requestTemplate = !string.IsNullOrEmpty(settings[SettingKeys.Translation.Gemini.RequestTemplate])
                 ? settings[SettingKeys.Translation.Gemini.RequestTemplate]
                 : _requestTemplateService.GetDefaultTemplate(SettingKeys.Translation.Gemini.RequestTemplate);
@@ -142,7 +146,7 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
             {
                 return await TranslateWithGeminiApi(replacements, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -159,6 +163,12 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -192,7 +202,7 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
             {
                 return await TranslateWithGeminiApi(replacements, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -209,6 +219,12 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -243,10 +259,10 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
                 "Gemini API request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode, 
                 responseContent);
-            throw new HttpRequestException(
-                $"Gemini API request failed with status {response.StatusCode}: {responseContent}",
-                null, 
-                response.StatusCode);
+            throw HttpFailure.FromResponse(
+                "Gemini",
+                response,
+                $"Gemini API request failed with status {response.StatusCode}: {responseContent}");
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -363,7 +379,7 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
             {
                 return await TranslateBatchWithGeminiApi(subtitleBatch, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (TranslationResponseException ex)
             {
                 if (attempt == _maxRetries)
                 {
@@ -380,6 +396,12 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                throw;
+            }
+            catch (TranslationException)
+            {
+                // Re-throw so the chain keeps the failure classification (rejected credentials, unusable
+                // configuration, rate limits) instead of wrapping it into a generic translation failure.
                 throw;
             }
             catch (Exception ex)
@@ -441,10 +463,10 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
                 "Gemini batch API request failed with status {StatusCode}: {ResponseContent}",
                 response.StatusCode, 
                 responseContent);
-            throw new HttpRequestException(
-                $"Gemini batch API request failed with status {response.StatusCode}: {responseContent}",
-                null, 
-                response.StatusCode);
+            throw HttpFailure.FromResponse(
+                "Gemini",
+                response,
+                $"Gemini batch API request failed with status {response.StatusCode}: {responseContent}");
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -465,7 +487,7 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
                 throw new TranslationException("Failed to deserialize translated subtitles");
             }
 
-            return MergeByPosition(translatedItems);
+            return BatchResponseMerger.MergeByPosition(translatedItems);
         }
 
         catch (JsonException ex)
@@ -479,7 +501,7 @@ public class GoogleGeminiService : BaseLanguageService, ITranslationService, IBa
                     if (translatedItems != null)
                     {
                         _logger.LogWarning("Successfully repaired the truncated JSON response from Gemini. Please verify the result.");
-                        return MergeByPosition(translatedItems);
+                        return BatchResponseMerger.MergeByPosition(translatedItems);
                     }
                 }
             }

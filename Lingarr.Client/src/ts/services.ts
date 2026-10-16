@@ -22,7 +22,8 @@ import {
     IPluginSummary,
     IPluginTestConnectionResponse,
     IProofreadLineApplyRequest,
-    IProofreadLineRequest
+    IProofreadLineRequest,
+    ITranslationChainValidation
 } from '@/ts'
 import {
     IPlexPinResponse,
@@ -50,6 +51,7 @@ export interface Services {
     telemetry: ITelemetryService
     requestTemplate: IRequestTemplateService
     plugin: IPluginService
+    translationChain: ITranslationChainService
     plex: IPlexService
     webhook: IWebhookService
 }
@@ -60,6 +62,14 @@ export interface IPluginService {
     getStatus(provider: string): Promise<IPluginStatus>
     getOptions(endpoint: string): Promise<IPluginOptionsResponse>
     testConnection(provider: string): Promise<IPluginTestConnectionResponse>
+}
+
+export interface ITranslationChainService {
+    /**
+     * Validates a raw `service_type` value against the providers the server can actually build, using
+     * the same rules as the runtime, so the settings UI can reject a chain before storing it.
+     */
+    validateTranslationChain(serviceType: string): Promise<ITranslationChainValidation>
 }
 
 export interface IAuthService {

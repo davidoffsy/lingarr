@@ -71,6 +71,8 @@
                         </div>
                     </div>
                 </div>
+
+                <LinesBySource :counts="statistics?.linesBySource" />
             </template>
         </CardComponent>
 
@@ -130,6 +132,7 @@ import LoaderCircleIcon from '@/components/icons/LoaderCircleIcon.vue'
 import LanguageChart from './LanguageChart.vue'
 import StatCard from './StatCard.vue'
 import MetricCard from './MetricCard.vue'
+import LinesBySource from './LinesBySource.vue'
 
 const loading = ref(true)
 const resetting = ref(false)

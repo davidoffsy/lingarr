@@ -12,4 +12,5 @@ public sealed class PluginResponse
     public required IReadOnlyList<PluginSettingField> Settings { get; init; }
     public required bool HasRequestTemplate { get; init; }
     public bool SupportsConnectionTest { get; init; }
+    public bool SupportsModelOverride { get; init; }
 }
