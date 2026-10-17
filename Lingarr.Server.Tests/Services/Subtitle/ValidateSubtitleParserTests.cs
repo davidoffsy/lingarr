@@ -1,8 +1,10 @@
 using System;
 using System.IO;
+using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models;
 using Lingarr.Server.Services;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Lingarr.Server.Tests.Services.Subtitle;
@@ -12,7 +14,8 @@ public class ValidateSubtitleParserTests : IDisposable
     private readonly string _directory;
     private readonly SubtitleService _service = new(
         NullLogger<SubtitleService>.Instance,
-        new LanguageCodeService());
+        new LanguageCodeService(),
+        Mock.Of<ISettingService>());
 
     public ValidateSubtitleParserTests()
     {

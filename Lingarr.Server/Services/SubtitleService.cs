@@ -1,5 +1,6 @@
 using System.Text;
 using Lingarr.Contracts.Translation;
+using Lingarr.Core.Configuration;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Subtitle;
 using Lingarr.Server.Models.FileSystem;
@@ -18,13 +19,16 @@ public class SubtitleService : ISubtitleService
 
     private readonly ILogger<SubtitleService> _logger;
     private readonly LanguageCodeService _languageCodeService;
+    private readonly ISettingService _settings;
 
     public SubtitleService(
         ILogger<SubtitleService> logger,
-        LanguageCodeService languageCodeService)
+        LanguageCodeService languageCodeService,
+        ISettingService settings)
     {
         _logger = logger;
         _languageCodeService = languageCodeService;
+        _settings = settings;
     }
 
     /// <inheritdoc />
@@ -102,6 +106,11 @@ public class SubtitleService : ISubtitleService
     /// <inheritdoc />
     public async Task WriteSubtitles(string filePath, List<SubtitleItem> subtitles, bool stripSubtitleFormatting)
     {
+        if (await IsStripTrailingIdeographicFullStopEnabled())
+        {
+            TrailingIdeographicFullStopStripper.Apply(subtitles);
+        }
+
         var extension = Path.GetExtension(filePath).ToLower();
         ISubtitleWriter writer = extension switch
         {
@@ -112,6 +121,12 @@ public class SubtitleService : ISubtitleService
 
         await using var fileStream = File.Create(filePath);
         await writer.WriteStreamAsync(fileStream, subtitles, stripSubtitleFormatting);
+    }
+
+    private async Task<bool> IsStripTrailingIdeographicFullStopEnabled()
+    {
+        var value = await _settings.GetSetting(SettingKeys.Translation.StripTrailingIdeographicFullStop);
+        return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <inheritdoc />

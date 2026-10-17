@@ -96,6 +96,18 @@
                 </ToggleButton>
 
                 <div class="flex flex-col space-x-2">
+                    <span class="font-semibold">Strip trailing full-width period:</span>
+                    Remove a single ideographic period (。) from the end of each subtitle when
+                    writing the file. Periods in the middle, consecutive periods (。。。), and other
+                    punctuation are not changed. Off by default.
+                </div>
+                <ToggleButton v-model="stripTrailingIdeographicFullStop">
+                    <span class="text-primary-content text-sm font-medium">
+                        {{ stripTrailingIdeographicFullStop == 'true' ? 'Enabled' : 'Disabled' }}
+                    </span>
+                </ToggleButton>
+
+                <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Add translator info</span>
                     Add translator info at the beginning of subtitles.
                 </div>
@@ -231,6 +243,16 @@ const preserveLineBreaks = computed({
     get: (): string => settingsStore.getSetting(SETTINGS.PRESERVE_LINE_BREAKS) as string,
     set: (newValue: string): void => {
         settingsStore.updateSetting(SETTINGS.PRESERVE_LINE_BREAKS, newValue, true)
+        saveNotification.value?.show()
+    }
+})
+
+const stripTrailingIdeographicFullStop = computed({
+    get: (): string =>
+        (settingsStore.getSetting(SETTINGS.STRIP_TRAILING_IDEOGRAPHIC_FULL_STOP) as string) ??
+        'false',
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.STRIP_TRAILING_IDEOGRAPHIC_FULL_STOP, newValue, true)
         saveNotification.value?.show()
     }
 })

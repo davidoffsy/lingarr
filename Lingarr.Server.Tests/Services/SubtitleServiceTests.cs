@@ -1,9 +1,12 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using Lingarr.Core.Configuration;
+using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Lingarr.Server.Tests.Services;
@@ -11,14 +14,17 @@ namespace Lingarr.Server.Tests.Services;
 public class SubtitleServiceTests : IDisposable
 {
     private readonly string _directory;
-    private readonly SubtitleService _service = new(
-        NullLogger<SubtitleService>.Instance,
-        new LanguageCodeService());
+    private readonly Mock<ISettingService> _settings = new();
+    private readonly SubtitleService _service;
 
     public SubtitleServiceTests()
     {
         _directory = Path.Combine(Path.GetTempPath(), "lingarr-subtitle-service-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_directory);
+        _service = new(
+            NullLogger<SubtitleService>.Instance,
+            new LanguageCodeService(),
+            _settings.Object);
     }
 
     public void Dispose()
@@ -254,6 +260,57 @@ public class SubtitleServiceTests : IDisposable
         Assert.Equal(3, selected.Subtitle.TrackIndex);
         Assert.Equal(string.Empty, selected.Subtitle.Caption);
     }
+
+    [Fact]
+    public async Task WriteSubtitles_SettingOff_KeepsTrailingIdeographicFullStop()
+    {
+        _settings
+            .Setup(service => service.GetSetting(SettingKeys.Translation.StripTrailingIdeographicFullStop))
+            .ReturnsAsync("false");
+        var path = Path.Combine(_directory, "Movie.zh.srt");
+
+        await _service.WriteSubtitles(path, [Cue("我回来了。")], false);
+
+        Assert.Contains("我回来了。", await File.ReadAllTextAsync(path));
+    }
+
+    [Fact]
+    public async Task WriteSubtitles_SettingOn_StripsTrailingIdeographicFullStop()
+    {
+        _settings
+            .Setup(service => service.GetSetting(SettingKeys.Translation.StripTrailingIdeographicFullStop))
+            .ReturnsAsync("true");
+        var path = Path.Combine(_directory, "Movie.zh.srt");
+
+        await _service.WriteSubtitles(path, [Cue("我回来了。")], false);
+
+        var body = await File.ReadAllTextAsync(path);
+        Assert.Contains("我回来了", body);
+        Assert.DoesNotContain("我回来了。", body);
+    }
+
+    [Fact]
+    public async Task WriteSubtitles_MissingSetting_KeepsTrailingIdeographicFullStop()
+    {
+        _settings
+            .Setup(service => service.GetSetting(SettingKeys.Translation.StripTrailingIdeographicFullStop))
+            .ReturnsAsync((string?)null);
+        var path = Path.Combine(_directory, "Movie.zh.srt");
+
+        await _service.WriteSubtitles(path, [Cue("我回来了。")], false);
+
+        Assert.Contains("我回来了。", await File.ReadAllTextAsync(path));
+    }
+
+    private static SubtitleItem Cue(string translated) => new()
+    {
+        Position = 1,
+        StartTime = 1000,
+        EndTime = 2000,
+        Lines = [translated],
+        PlaintextLines = [translated],
+        TranslatedLines = [translated]
+    };
 
     private void Touch(string fileName) =>
         File.WriteAllText(Path.Combine(_directory, fileName), "1\n00:00:01,000 --> 00:00:02,000\nHi\n");
