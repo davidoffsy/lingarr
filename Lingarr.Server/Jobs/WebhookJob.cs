@@ -46,9 +46,16 @@ public class WebhookJob
         _logger = logger;
     }
 
-    private async Task<bool> AutoTranslateEnabled() =>
-        !string.Equals(await _settingService.GetSetting(SettingKeys.Integration.ArrWebhookAutoTranslate),
-            "false", StringComparison.OrdinalIgnoreCase);
+    private async Task<bool> AutoTranslateEnabled(string key)
+    {
+        var value = await _settingService.GetSetting(key);
+        if (string.IsNullOrEmpty(value))
+        {
+            value = await _settingService.GetSetting(SettingKeys.Integration.ArrWebhookAutoTranslate);
+        }
+
+        return !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
+    }
 
     [DisableConcurrentExecution(timeoutInSeconds: 2 * 60)]
     [AutomaticRetry(Attempts = 3)]
@@ -78,7 +85,7 @@ public class WebhookJob
                 return;
             }
 
-            if (!await AutoTranslateEnabled()) return;
+            if (!await AutoTranslateEnabled(SettingKeys.Integration.RadarrWebhookAutoTranslate)) return;
             await _mediaSubtitleProcessor.ProcessMedia(movie, MediaType.Movie);
         }
         catch (Exception ex)
@@ -102,7 +109,7 @@ public class WebhookJob
 
         try
         {
-            var autoTranslate = await AutoTranslateEnabled();
+            var autoTranslate = await AutoTranslateEnabled(SettingKeys.Integration.SonarrWebhookAutoTranslate);
             foreach (var episode in payload.Episodes!)
             {
                 var episodeId = await _mediaService.GetEpisodeIdOrSyncFromSonarrEpisodeId(episode.Id);

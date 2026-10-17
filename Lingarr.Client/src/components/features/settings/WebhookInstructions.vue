@@ -49,14 +49,19 @@
                     </div>
                 </template>
             </div>
-            <div class="mt-4 flex flex-col space-y-2">
-                <ToggleButton v-model="arrWebhookAutoTranslate">
+            <div class="mt-4 flex flex-col space-y-3">
+                <ToggleButton v-model="radarrWebhookAutoTranslate">
                     <span class="text-sm font-medium text-primary-content">
-                        Automatically translate subtitles on new media imports
+                        Automatically translate Radarr movie imports
+                    </span>
+                </ToggleButton>
+                <ToggleButton v-model="sonarrWebhookAutoTranslate">
+                    <span class="text-sm font-medium text-primary-content">
+                        Automatically translate Sonarr episode imports
                     </span>
                 </ToggleButton>
                 <p class="text-sm text-secondary-content/80">
-                    When off, download webhooks only sync new media. Scheduled translation tasks are unaffected.
+                    When off, that app's download webhooks only sync new media. Scheduled translation tasks are unaffected.
                 </p>
             </div>
         </template>
@@ -81,13 +86,17 @@ const loadError = ref('')
 const copied = ref<'radarr' | 'sonarr' | ''>('')
 const saveNotification = ref<InstanceType<typeof SaveNotification> | null>(null)
 const settingsStore = useSettingStore()
-const arrWebhookAutoTranslate = computed({
-    get: (): string => (settingsStore.getSetting(SETTINGS.ARR_WEBHOOK_AUTO_TRANSLATE) as string) ?? 'true',
-    set: (newValue: string): void => {
-        settingsStore.updateSetting(SETTINGS.ARR_WEBHOOK_AUTO_TRANSLATE, newValue, true)
-        saveNotification.value?.show()
-    }
-})
+const webhookAutoTranslate = (key: typeof SETTINGS.RADARR_WEBHOOK_AUTO_TRANSLATE | typeof SETTINGS.SONARR_WEBHOOK_AUTO_TRANSLATE) =>
+    computed({
+        get: (): string => (settingsStore.getSetting(key) as string) ?? 'true',
+        set: (newValue: string): void => {
+            settingsStore.updateSetting(key, newValue, true)
+            saveNotification.value?.show()
+        }
+    })
+
+const radarrWebhookAutoTranslate = webhookAutoTranslate(SETTINGS.RADARR_WEBHOOK_AUTO_TRANSLATE)
+const sonarrWebhookAutoTranslate = webhookAutoTranslate(SETTINGS.SONARR_WEBHOOK_AUTO_TRANSLATE)
 
 const radarrWebhookUrl = computed(() => webhookUrl('/api/webhook/radarr'))
 const sonarrWebhookUrl = computed(() => webhookUrl('/api/webhook/sonarr'))

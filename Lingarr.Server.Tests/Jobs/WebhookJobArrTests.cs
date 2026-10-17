@@ -45,7 +45,7 @@ public class WebhookJobArrTests
         _db.Movies.Add(movie);
         await _db.SaveChangesAsync();
         _media.Setup(m => m.GetMovieIdOrSyncFromRadarrMovieId(12)).ReturnsAsync(movie.Id);
-        _settings.Setup(s => s.GetSetting(SettingKeys.Integration.ArrWebhookAutoTranslate)).ReturnsAsync(setting);
+        _settings.Setup(s => s.GetSetting(SettingKeys.Integration.RadarrWebhookAutoTranslate)).ReturnsAsync(setting);
 
         await _job.ProcessRadarrWebhook(new RadarrWebhookPayload
         {
@@ -72,7 +72,7 @@ public class WebhookJobArrTests
         await _db.SaveChangesAsync();
         foreach (var episode in episodes)
             _media.Setup(m => m.GetEpisodeIdOrSyncFromSonarrEpisodeId(episode.SonarrId)).ReturnsAsync(episode.Id);
-        _settings.Setup(s => s.GetSetting(SettingKeys.Integration.ArrWebhookAutoTranslate)).ReturnsAsync(setting);
+        _settings.Setup(s => s.GetSetting(SettingKeys.Integration.SonarrWebhookAutoTranslate)).ReturnsAsync(setting);
 
         await _job.ProcessSonarrWebhook(new SonarrWebhookPayload
         {
@@ -84,6 +84,54 @@ public class WebhookJobArrTests
             _media.Verify(m => m.GetEpisodeIdOrSyncFromSonarrEpisodeId(episode.SonarrId), Times.Once);
         _processor.Verify(p => p.ProcessMedia(It.IsAny<IMedia>(), MediaType.Episode),
             translate ? Times.Exactly(2) : Times.Never());
+    }
+
+    [Fact]
+    public async Task AutoTranslateToggles_AreIndependentPerApp()
+    {
+        var movie = new Movie { RadarrId = 12, Title = "Movie", Path = "/movies", FileName = "movie.mkv", DateAdded = DateTimeOffset.UtcNow };
+        var show = new Show { SonarrId = 5, Title = "Show", Path = "/shows", DateAdded = DateTimeOffset.UtcNow };
+        var season = new Season { SeasonNumber = 1, Show = show };
+        var episode = new Episode { SonarrId = 21, EpisodeNumber = 1, Title = "Episode 1", Season = season };
+        _db.Movies.Add(movie);
+        _db.Episodes.Add(episode);
+        await _db.SaveChangesAsync();
+        _media.Setup(m => m.GetMovieIdOrSyncFromRadarrMovieId(12)).ReturnsAsync(movie.Id);
+        _media.Setup(m => m.GetEpisodeIdOrSyncFromSonarrEpisodeId(21)).ReturnsAsync(episode.Id);
+        _settings.Setup(s => s.GetSetting(SettingKeys.Integration.RadarrWebhookAutoTranslate)).ReturnsAsync("false");
+        _settings.Setup(s => s.GetSetting(SettingKeys.Integration.SonarrWebhookAutoTranslate)).ReturnsAsync("true");
+
+        await _job.ProcessRadarrWebhook(new RadarrWebhookPayload
+        {
+            EventType = "Download", Movie = new RadarrWebhookMovie { Id = 12, Title = "Movie" }
+        });
+        await _job.ProcessSonarrWebhook(new SonarrWebhookPayload
+        {
+            EventType = "Download",
+            Series = new SonarrWebhookSeries { Id = 5, Title = "Show" },
+            Episodes = new[] { new SonarrWebhookEpisode { Id = 21 } }.ToList()
+        });
+
+        _processor.Verify(p => p.ProcessMedia(It.IsAny<IMedia>(), MediaType.Movie), Times.Never);
+        _processor.Verify(p => p.ProcessMedia(It.IsAny<IMedia>(), MediaType.Episode), Times.Once);
+    }
+
+    [Fact]
+    public async Task MissingAppSetting_FallsBackToLegacyCombinedToggle()
+    {
+        var movie = new Movie { RadarrId = 12, Title = "Movie", Path = "/movies", FileName = "movie.mkv", DateAdded = DateTimeOffset.UtcNow };
+        _db.Movies.Add(movie);
+        await _db.SaveChangesAsync();
+        _media.Setup(m => m.GetMovieIdOrSyncFromRadarrMovieId(12)).ReturnsAsync(movie.Id);
+        _settings.Setup(s => s.GetSetting(SettingKeys.Integration.RadarrWebhookAutoTranslate)).ReturnsAsync((string?)null);
+        _settings.Setup(s => s.GetSetting(SettingKeys.Integration.ArrWebhookAutoTranslate)).ReturnsAsync("false");
+
+        await _job.ProcessRadarrWebhook(new RadarrWebhookPayload
+        {
+            EventType = "Download", Movie = new RadarrWebhookMovie { Id = 12, Title = "Movie" }
+        });
+
+        _processor.Verify(p => p.ProcessMedia(It.IsAny<IMedia>(), MediaType.Movie), Times.Never);
     }
 
     [Fact]

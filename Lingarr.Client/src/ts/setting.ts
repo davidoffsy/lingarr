@@ -101,7 +101,8 @@ export const SETTINGS = {
     LANGUAGE_CODE_FORMAT: 'language_code_format',
     RADARR_DEFAULT_INCLUDE: 'radarr_default_include',
     SONARR_DEFAULT_INCLUDE: 'sonarr_default_include',
-    ARR_WEBHOOK_AUTO_TRANSLATE: 'arr_webhook_auto_translate',
+    RADARR_WEBHOOK_AUTO_TRANSLATE: 'radarr_webhook_auto_translate',
+    SONARR_WEBHOOK_AUTO_TRANSLATE: 'sonarr_webhook_auto_translate',
     PLEX_URL: 'plex_url',
     PLEX_CLIENT_IDENTIFIER: 'plex_client_identifier',
     PLEX_MACHINE_ID: 'plex_machine_id',
@@ -193,7 +194,8 @@ export interface ISettings {
     language_code_format: string
     radarr_default_include: string
     sonarr_default_include: string
-    arr_webhook_auto_translate: string
+    radarr_webhook_auto_translate: string
+    sonarr_webhook_auto_translate: string
     plex_url: string
     plex_client_identifier: string
     plex_machine_id: string
