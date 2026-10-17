@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Lingarr.Core.Entities;
 
@@ -12,10 +13,15 @@ public class Statistics : BaseEntity
     public int TotalEpisodes { get; set; }
     public int TotalSubtitles { get; set; }
 
+    [JsonIgnore]
     public string TranslationsByMediaTypeJson { get; set; } = "{}";
+    [JsonIgnore]
     public string TranslationsByServiceJson { get; set; } = "{}";
+    [JsonIgnore]
     public string SubtitlesByLanguageJson { get; set; } = "{}";
+    [JsonIgnore]
     public string TranslationsByModelJson { get; set; } = "{}";
+    [JsonIgnore]
     public string? LinesBySourceJson { get; set; } = "{}";
 
     [NotMapped]

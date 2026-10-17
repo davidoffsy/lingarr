@@ -11,7 +11,7 @@ All AI services follow the same pattern: select the service, provide an API key,
 3. Click the gear icon on the service row to configure its credentials.
 4. Enter the API key and choose a model. Self-hosted services such as [LocalAI](#localai) and [Custom](#custom) also ask for an endpoint.
 
-    When a service asks for an endpoint, LocalAI accepts a **base URL** or a full completion path, and [Custom](#custom) accepts a base URL or the full path of its selected protocol (`/v1/chat/completions` or `/v1/responses`).
+    When a service asks for an endpoint, LocalAI accepts a **base URL** or a full completion path, and [Custom](#custom) accepts a base URL or the full path of its selected protocol (`/v1/chat/completions`, `/v1/responses`, or `/v1/messages`).
     
     Choose a protocol in the LocalAI settings:
     
@@ -19,7 +19,9 @@ All AI services follow the same pattern: select the service, provide an API key,
     - **Ollama Generate** posts to `{base}/api/generate`. Example base: `http://ollama:11434`.
     - **Auto (from URL)** keeps the old behaviour for full paths: an endpoint ending in `completions` uses chat, and other explicit paths are posted as-is. A bare host such as `http://ollama:11434` (optionally with `/v1`) is completed to `{base}/api/generate`. Prefer an explicit protocol for OpenAI-compatible gateways.
     
-    Use **Test connection** to fetch the model list (`/v1/models` or Ollama `/api/tags`) and then select a model, or type a model id.
+    Custom chooses its protocol independently (`openai_chat`, `openai_responses`, or `anthropic_messages`) and never guesses; see [Custom](#custom).
+    
+    Use **Test connection** to fetch the model list (`/v1/models` or Ollama `/api/tags`) and then select a model, or type a model id. Loading the list is not a translation: a successful test does not prove that inference will succeed, and a failed list does not mean the gateway cannot translate.
 
 5. Optionally configure a prompt, a default one is automatically set if left empty. Customization is available by clicking the `Open Request Settings` button below the configuration.
 6. Set your source and target languages at the bottom of the page.
@@ -34,6 +36,10 @@ The service list under **Settings > Services** is an ordered fallback chain. Eac
 custom (model-a) → custom (model-b) → deepl
 ```
 
+Rows of the same provider share that provider's address, API key, protocol, default model and request template. Only the model override on each row is independent. Two different gateway addresses need two providers (for example LocalAI and Custom), not two Custom rows.
+
+Language matching is applied before list order. A later row that matches the requested language pair exactly is tried before an earlier row that only matches through an alias or a script/neutral equivalent. Within the same match tier, the configured order is used. The list is therefore not an absolute priority across language support levels.
+
 When a candidate fails, Lingarr follows this sequence:
 
 1. Retryable errors are retried on **that same candidate** first, up to the configured retry limit. Retryable means HTTP `429`, `408`, `502`, `503`, `504`, and a request that exceeds the configured request timeout (default 5 minutes).
@@ -42,6 +48,10 @@ When a candidate fails, Lingarr follows this sequence:
 4. Cancelling the job stops immediately. Cancellation is not turned into a fallback, and a half-finished file is not marked completed.
 
 Batch translation uses the same list. If every batch-capable candidate fails, unfinished lines are handed to later candidates. A later candidate that can only translate line by line still completes those lines; the file does not fail as a whole.
+
+**Compatibility.** Existing LocalAI configurations keep working; nothing is migrated automatically. Custom is a new, opt-in provider. The settings UI writes `SERVICE_TYPE` as an object array (`[{"provider":"custom","model":"model-a"}]`). Older Lingarr versions that only understand a string or a string array cannot read that form, so a database saved by this version should not be opened in an older release. Historic string and string-array values are still accepted on upgrade.
+
+**Statistics.** The dashboard's Translation Services and Files by Model tiles count finished files once, under the source that translated most of the lines (the historical “times translated” metric). Lines by Source counts the lines each provider and model actually translated, so a file that fell back across models reports every source.
 
 Endpoints for [LocalAI](#localai) and [Custom](#custom) must be absolute `http` or `https` URLs. Other schemes are rejected as a configuration error. Query strings are kept, and Azure OpenAI paths of the form `/deployments/{id}/...` are not rewritten.
 
@@ -236,7 +246,7 @@ Other known API paths (`/chat/completions`, `/responses`, `/messages`, `/complet
 
 **Authentication.** `CUSTOM_API_KEY` is optional. OpenAI Chat and Responses send it as `Authorization: Bearer <key>`. Anthropic Messages sends it as `x-api-key` together with `anthropic-version` from `CUSTOM_ANTHROPIC_VERSION` (default `2023-06-01`). When the key is empty, the request is sent without one and Lingarr warns that gateways requiring authentication will reject it. A blank version is a configuration error for Messages and is not guessed.
 
-**Models.** **Test connection** requests the model catalogue at the `/v1/models` path of the same address. OpenAI protocols send the bearer token; Anthropic Messages sends `x-api-key` and `anthropic-version`. Gateways without a `/models` endpoint are supported: the model field accepts a typed id, and a failed model list does not mean the gateway cannot translate.
+**Models.** **Test connection** requests the model catalogue at the `/v1/models` path of the same address. OpenAI protocols send the bearer token; Anthropic Messages sends `x-api-key` and `anthropic-version`. Gateways without a `/models` endpoint are supported: the model field accepts a typed id, and a failed model list does not mean the gateway cannot translate. Conversely, a successful catalogue (or **Test connection**) only means the list could be read; it does not send a translation and does not prove that inference will succeed.
 
 **Request template.** Each protocol has its own default body, stored independently from the others and from `local_ai_chat_request_template`, `openai_request_template` and `anthropic_request_template`: `custom_chat_request_template` for `openai_chat` (`model` + `messages`), `custom_responses_request_template` for `openai_responses` (`model` + `input`), and `custom_messages_request_template` for `anthropic_messages` (`model`, `max_tokens`, `system`, `messages`). **Settings > Services > Request Settings** follows `custom_protocol`, so the editor always shows the template that is actually in use.
 

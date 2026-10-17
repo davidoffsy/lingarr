@@ -1,8 +1,9 @@
 <template>
     <CardComponent title="Services">
         <template #description>
-            Configure the translation service for subtitle localization. Add fallback services to be
-            tried in order when the primary service fails.
+            Each row is one candidate: a provider plus an optional model. The same provider may appear
+            more than once with different models. Closer language matches are tried first; within the
+            same match, rows are tried top to bottom when a candidate fails.
         </template>
         <template #content>
             <SaveNotification ref="saveNotification" />
@@ -139,6 +140,10 @@
                         </div>
                     </li>
                 </ol>
+                <p class="text-sm opacity-70">
+                    Address, API key, protocol and the default model are shared across every row of the
+                    same provider. Only the model override on each row is independent.
+                </p>
                 <p v-if="pluginListUnavailable" class="text-sm text-amber-500">
                     The provider list could not be loaded. Stored models still show and can be typed
                     or cleared.
@@ -164,6 +169,10 @@
                     <span class="text-secondary-content/60">Configuring credentials for</span>
                     <span class="ml-1 font-semibold">{{ configuringLabel }}</span>
                 </div>
+                <p v-if="sharedCredentialsCount > 1" class="text-sm opacity-70">
+                    {{ sharedCredentialsCount }} {{ configuringLabel }} rows share the credentials
+                    below.
+                </p>
                 <DynamicPluginForm
                     v-if="configuringManifest"
                     :manifest="configuringManifest"
@@ -333,6 +342,16 @@ const configuringLabel = computed(() => {
         return ''
     }
     return serviceOptions.value.find((option) => option.value === provider)?.label ?? provider
+})
+
+/** Rows that reuse the provider whose credentials are currently open. */
+const sharedCredentialsCount = computed(() => {
+    const provider = configuringRow.value?.provider.trim().toLowerCase()
+    if (!provider) {
+        return 0
+    }
+
+    return rows.value.filter((row) => row.provider.trim().toLowerCase() === provider).length
 })
 
 /**

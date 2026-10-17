@@ -18,7 +18,7 @@ A provider class can also implement interfaces from `Lingarr.Contracts.Translati
 
 ### `IProofreadService`
 
-Implement this to let your provider proofread an existing translation, comparing it against its source line and returning a corrected version:
+Implement this to let your provider proofread an existing translation, comparing it against its source line and returning a corrected version. Lingarr walks the translation chain and only tries candidates whose class implements this interface; providers that don't are skipped and the next proofread-capable candidate is used.
 
 ```csharp
 public interface IProofreadService
@@ -33,6 +33,19 @@ public interface IProofreadService
 ```
 
 Return `translatedText` unchanged when nothing needs correcting. Lingarr only shows the Proofread action, in the UI and through the API, for providers whose class implements this interface. Providers that don't implement it are unaffected and are simply left out of proofreading.
+
+### `IModelOverridable`
+
+Implement this, and set `SupportsModelOverride` on the manifest, to let each translation-chain row pick its own model:
+
+```csharp
+public interface IModelOverridable
+{
+    void OverrideModel(string model);
+}
+```
+
+The factory calls `OverrideModel` on a fresh instance after construction, before any translation, and never writes the override back to settings. A plugin that does not implement the interface keeps its single-model behaviour: the settings UI hides the per-row model picker, and a chain row that still sets `model` is skipped. The two declarations have to agree — the manifest advertises the picker, the interface honours it.
 
 ## Required setup
 
@@ -60,7 +73,7 @@ Lingarr scans a folder specified by the `PLUGINS_PATH` environment variable at s
 
 Do not use these plugin identifiers (they are used by built-in providers):
 
-`anthropic`, `openai`, `gemini`, `deepseek`, `mistral`, `xai`, `localai`, `deepl`, `libretranslate`, `google`, `bing`, `microsoft`, `yandex`
+`anthropic`, `openai`, `gemini`, `deepseek`, `mistral`, `xai`, `localai`, `custom`, `deepl`, `libretranslate`, `google`, `bing`, `microsoft`, `yandex`
 
 ## Settings
 
@@ -69,7 +82,7 @@ Do not use these plugin identifiers (they are used by built-in providers):
 - PluginSettingType.Secret fields are encrypted.
 - PluginSettingType.Dropdown renders a static list from `Options`.
 - PluginSettingType.RemoteDropdown loads options from `OptionsEndpoint`. Set `AllowCustom` to also show a free-text field.
-- Set `SupportsConnectionTest` to add a Test connection button that probes `GetModels()` after the connection fields.
+- Set `SupportsConnectionTest` to add a Test connection button that probes `GetModels()` after the connection fields. Success means the model list could be read, not that a translation will succeed.
 - To read settings, inject `Lingarr.Contracts.Settings.ISettingsAccess` in your constructor.
 - Plugins can only read settings, they cannot write them.
 

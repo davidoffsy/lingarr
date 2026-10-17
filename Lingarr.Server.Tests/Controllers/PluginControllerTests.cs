@@ -84,6 +84,40 @@ public class PluginControllerTests
             issue => issue.Kind == TranslationChainIssueKind.DuplicateProviderModel);
     }
 
+    [Fact]
+    public void ValidateTranslationChain_HistoricSingleValue_IsValid()
+    {
+        var response = Validate(CreateController(), "openai");
+
+        Assert.True(response.IsValid);
+        Assert.False(response.UsedDefaultFallback);
+        Assert.Empty(response.Issues);
+        Assert.Equal(["openai"], response.Candidates);
+    }
+
+    [Fact]
+    public void ValidateTranslationChain_HistoricStringArray_IsValid()
+    {
+        var response = Validate(CreateController(), "[\"openai\",\"deepl\"]");
+
+        Assert.True(response.IsValid);
+        Assert.False(response.UsedDefaultFallback);
+        Assert.Empty(response.Issues);
+        Assert.Equal(["openai", "deepl"], response.Candidates);
+    }
+
+    [Fact]
+    public void ValidateTranslationChain_SameProviderDifferentModels_IsValid()
+    {
+        var response = Validate(CreateController(),
+            "[{\"provider\":\"openai\",\"model\":\"model-a\"},{\"provider\":\"openai\",\"model\":\"model-b\"}]");
+
+        Assert.True(response.IsValid);
+        Assert.False(response.UsedDefaultFallback);
+        Assert.Empty(response.Issues);
+        Assert.Equal(["openai (model-a)", "openai (model-b)"], response.Candidates);
+    }
+
     private static TranslationChainValidationResponse Validate(PluginController controller, string serviceType)
     {
         var result = controller.ValidateTranslationChain(

@@ -1,6 +1,9 @@
 <template>
     <div v-if="entries.length" class="mt-4">
-        <h3 class="text-primary-content mb-4 text-sm font-medium">Lines by Source</h3>
+        <div class="mb-4">
+            <h3 class="text-primary-content text-sm font-medium">{{ title }}</h3>
+            <p v-if="caption" class="text-primary-content/70 mt-1 text-xs">{{ caption }}</p>
+        </div>
         <div class="grid grid-cols-2 gap-2 xl:grid-cols-3">
             <div v-for="[source, count] in entries" :key="source" class="bg-primary rounded-sm p-2">
                 <h4 class="text-primary-content/70 truncate text-xs font-medium" :title="source">
@@ -16,10 +19,17 @@
 import { computed } from 'vue'
 import { splitSourceDisplayName } from '@/ts'
 
-const props = defineProps<{
-    /** Line counts per source, keyed by backend `TranslationSource.DisplayName` (`provider:model`). */
-    counts?: Record<string, number>
-}>()
+const props = withDefaults(
+    defineProps<{
+        /** Line or file counts per source, keyed by backend `TranslationSource.DisplayName`. */
+        counts?: Record<string, number>
+        title?: string
+        caption?: string
+    }>(),
+    {
+        title: 'Lines by Source'
+    }
+)
 
 const entries = computed(() => {
     if (!props.counts) {

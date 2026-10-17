@@ -90,7 +90,7 @@ public sealed class CustomPluginManifest : IPluginManifest
             Required = true,
             AllowCustom = true,
             OptionsEndpoint = "/api/plugin/custom/models",
-            Description = "Test the connection to load models, then select one or type a model id."
+            Description = "Test the connection to load models, then select one or type a model id. Loading the list is not a translation."
         }
     ];
 }

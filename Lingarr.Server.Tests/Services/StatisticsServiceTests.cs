@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Lingarr.Core.Data;
 using Lingarr.Core.Entities;
@@ -204,5 +205,26 @@ public class StatisticsServiceTests : IDisposable
         Assert.Equal(0, stats.TotalLinesTranslated);
         Assert.Equal(0, stats.TotalCharactersTranslated);
         Assert.Empty(await _statisticsService.GetDailyStatistics());
+    }
+
+    [Fact]
+    public void Statistics_ApiSerialization_OmitsStorageColumnsAndKeepsDictionaries()
+    {
+        var stats = new Statistics { TotalFilesTranslated = 1, TotalLinesTranslated = 3 };
+        stats.TranslationsByService = new Dictionary<string, int> { ["openai"] = 1 };
+        stats.TranslationsByModel = new Dictionary<string, int> { ["openai:gpt-4o"] = 1 };
+        stats.LinesBySource = new Dictionary<string, int> { ["openai:gpt-4o"] = 3 };
+
+        var json = JsonSerializer.Serialize(stats, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+
+        Assert.DoesNotContain("translationsByServiceJson", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("translationsByModelJson", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("linesBySourceJson", json, StringComparison.Ordinal);
+        Assert.Contains("\"translationsByService\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"translationsByModel\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"linesBySource\"", json, StringComparison.Ordinal);
     }
 }

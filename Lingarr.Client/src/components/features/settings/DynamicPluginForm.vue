@@ -24,6 +24,9 @@
                 @click="testConnection">
                 Test connection
             </ButtonComponent>
+            <p class="text-secondary-content/60 text-xs">
+                Loads the model list. This does not send a translation.
+            </p>
             <p
                 v-if="testMessage"
                 class="text-sm"

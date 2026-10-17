@@ -102,7 +102,7 @@ Each report also carries an installation identifier. This is a random value gene
 
 | **Environment Variable** | **Description**                                                                 |
 |--------------------------|---------------------------------------------------------------------------------|
-| `SERVICE_TYPE`           | An ordered JSON array of translation services. The first entry is the primary; the rest are fallbacks tried in order when the primary fails. A single value (e.g. `openai`) is still accepted and is normalised to a one-element array on startup. |
+| `SERVICE_TYPE`           | An ordered JSON array of translation services. Each entry is a provider name or an object `{ "provider", "model?" }`. Language support is matched first; within the same match, entries are tried in order. A single value (e.g. `openai`) is still accepted and is promoted to `[{"provider":"openai"}]` on startup. The object form is not readable by older Lingarr versions. |
 | `SOURCE_LANGUAGES`       | A minified JSON array of source languages for translation. |
 | `TARGET_LANGUAGES`       | A minified JSON array of target languages for translation. |
 | `USE_BATCH_TRANSLATION`  | Set to `true` to translate subtitles in batches with AI services, defaults to false. |
@@ -258,9 +258,13 @@ An entry may also be an object with a `provider` and an optional `model`, so sev
 
 Fallback behaviour is the same in the web UI and when `SERVICE_TYPE` is set from the environment:
 
+- Language matching is applied before list order. A later row that matches the requested pair exactly is tried before an earlier row that only matches through an alias or a script/neutral equivalent. Within the same match tier, the configured order is used.
+- Rows of the same provider share that provider's address, API key, protocol, default model and request template. Only the model override on each row is independent.
 - A rate limit, request timeout (`408` or the configured request timeout, default 5 minutes), or gateway error (`502`, `503`, `504`) is retried on the current candidate, then the next entry is tried.
 - HTTP `401` (or a missing address / API key) skips the remaining models of that provider.
 - With batch translation enabled, a failed batch candidate does not fail the file: unfinished lines continue down the chain, including candidates that can only translate line by line.
+
+Existing `localai` configurations keep working; Custom is opt-in and is not migrated from LocalAI. The object-array form written by this version cannot be read by older Lingarr releases that only understand a string or a string array.
 
 The supported values are:
 
@@ -274,7 +278,7 @@ The supported values are:
 | `mistral`       | Use Mistral's models for translations.                                          |
 | `xai`           | Use xAI's Grok models for translations.                                         |
 | `localai`       | Use a locally hosted or OpenAI-compatible AI model for translations.            |
-| `custom`        | Use your own OpenAI-compatible gateway over the Chat Completions protocol.      |
+| `custom`        | Use your own gateway over Chat Completions, Responses, or Anthropic Messages. Independent from LocalAI. |
 | `deepl`         | Use the DeepL API for translations.                                             |
 | `google`        | Use Google Translate for translations.                                          |
 | `bing`          | Use Bing Translate for translations.                                            |

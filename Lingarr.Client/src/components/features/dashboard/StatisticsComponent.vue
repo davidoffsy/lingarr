@@ -54,9 +54,15 @@
                 </div>
 
                 <div v-if="translationServices.length" class="mt-4">
-                    <h3 class="mb-4 text-sm font-medium text-primary-content">
-                        Translation Services
-                    </h3>
+                    <div class="mb-4">
+                        <h3 class="text-sm font-medium text-primary-content">
+                            Translation Services
+                        </h3>
+                        <p class="text-primary-content/70 mt-1 text-xs">
+                            Finished files, counted once under the provider that translated most of
+                            the lines.
+                        </p>
+                    </div>
                     <div class="grid grid-cols-2 gap-2 xl:grid-cols-3">
                         <div
                             v-for="[service, count] in translationServices"
@@ -72,7 +78,14 @@
                     </div>
                 </div>
 
-                <LinesBySource :counts="statistics?.linesBySource" />
+                <LinesBySource
+                    title="Files by Model"
+                    caption="Finished files, counted once under the model that translated most of the lines."
+                    :counts="statistics?.translationsByModel" />
+                <LinesBySource
+                    title="Lines by Source"
+                    caption="Lines actually translated. A file that fell back across models reports every source."
+                    :counts="statistics?.linesBySource" />
             </template>
         </CardComponent>
 

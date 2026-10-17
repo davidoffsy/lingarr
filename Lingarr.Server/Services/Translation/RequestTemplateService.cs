@@ -18,7 +18,7 @@ public class RequestTemplateService : IRequestTemplateService
         [SettingKeys.Translation.Anthropic.RequestTemplate] =
             () => JsonSerializer.Serialize(new AnthropicTemplate()),
         [SettingKeys.Translation.LocalAi.ChatRequestTemplate] =
-            () => JsonSerializer.Serialize(new LocalAiChatTemplate()),
+            () => JsonSerializer.Serialize(new OpenAiChatTemplate()),
         [SettingKeys.Translation.LocalAi.GenerateRequestTemplate] =
             () => JsonSerializer.Serialize(new OllamaGenerateTemplate()),
         [SettingKeys.Translation.Custom.ChatRequestTemplate] =
