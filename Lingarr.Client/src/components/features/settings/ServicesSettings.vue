@@ -1,9 +1,9 @@
 <template>
     <CardComponent title="Services">
         <template #description>
-            Each row is one candidate: a provider plus an optional model. The same provider may appear
-            more than once with different models. Closer language matches are tried first; within the
-            same match, rows are tried top to bottom when a candidate fails.
+            Each row is one candidate: a provider plus an optional model. The same provider may
+            appear more than once with different models. Closer language matches are tried first;
+            within the same match, rows are tried top to bottom when a candidate fails.
         </template>
         <template #content>
             <SaveNotification ref="saveNotification" />
@@ -19,95 +19,96 @@
                         :key="row.id"
                         class="rounded-md py-2.5"
                         :class="{ 'bg-accent/10': row.id === configuringRowId }">
-                        <div class="flex items-center justify-between gap-6">
-                            <div class="flex min-w-0 items-center gap-2">
-                                <span
-                                    class="bg-accent/20 text-accent-content shrink-0 rounded px-2 py-0.5 text-xs font-semibold tracking-wider uppercase"
-                                    aria-hidden="true">
-                                    {{ index === 0 ? 'Primary' : `Fallback ${index}` }}
-                                </span>
+                        <div
+                            class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1.5">
+                            <span
+                                class="bg-accent/20 text-accent-content shrink-0 rounded px-2 py-0.5 text-xs font-semibold tracking-wider whitespace-nowrap uppercase"
+                                aria-hidden="true">
+                                {{ index === 0 ? 'Primary' : `Fallback ${index}` }}
+                            </span>
+                            <div class="min-w-0">
+                                <SelectComponent
+                                    :selected="row.provider"
+                                    :options="serviceOptions"
+                                    size="sm"
+                                    :no-options="
+                                        pluginListUnavailable
+                                            ? 'The provider list is unavailable.'
+                                            : 'No providers available.'
+                                    "
+                                    @update:selected="
+                                        (value: string) => updateProvider(row.id, value)
+                                    " />
                             </div>
-                            <div class="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                                <div class="w-52">
-                                    <SelectComponent
-                                        :selected="row.provider"
-                                        :options="serviceOptions"
-                                        size="sm"
-                                        :no-options="
-                                            pluginListUnavailable
-                                                ? 'The provider list is unavailable.'
-                                                : 'No providers available.'
-                                        "
-                                        @update:selected="
-                                            (value: string) => updateProvider(row.id, value)
-                                        " />
-                                </div>
-                                <div v-if="supportsModelOverride(row.provider)" class="w-52">
-                                    <TranslationChainModelField
-                                        :provider="row.provider"
-                                        :model-value="row.model"
-                                        @update:model-value="
-                                            (value: string) => updateModel(row.id, value)
-                                        " />
-                                </div>
-                                <div v-else-if="row.model.trim()" class="w-52">
-                                    <TranslationChainModelField
-                                        v-if="pluginListUnavailable"
-                                        :provider="row.provider"
-                                        :model-value="row.model"
-                                        @update:model-value="
-                                            (value: string) => updateModel(row.id, value)
-                                        " />
-                                    <p v-else class="truncate text-xs" :title="row.model">
-                                        {{ row.model }}
-                                    </p>
-                                    <button
-                                        v-if="showClearUnsupportedModel(row)"
-                                        type="button"
-                                        class="text-xs text-red-500 hover:underline"
-                                        @click="clearModel(row.id)">
-                                        Clear unsupported model
-                                    </button>
-                                </div>
-                                <div class="flex items-center">
-                                    <button
-                                        type="button"
-                                        class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
-                                        :disabled="row.id === configuringRowId"
-                                        :aria-pressed="row.id === configuringRowId"
-                                        title="Configure credentials"
-                                        aria-label="Configure credentials"
-                                        @click="configuringRowId = row.id">
-                                        <SettingIcon class="h-4 w-4" />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
-                                        :disabled="index === 0"
-                                        title="Move up"
-                                        aria-label="Move up"
-                                        @click="moveRow(row.id, -1)">
-                                        <CaretUpIcon class="h-4 w-4" />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
-                                        :disabled="index === rows.length - 1"
-                                        title="Move down"
-                                        aria-label="Move down"
-                                        @click="moveRow(row.id, 1)">
-                                        <CaretDownIcon class="h-4 w-4" />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
-                                        :disabled="rows.length <= 1"
-                                        title="Remove service"
-                                        aria-label="Remove service"
-                                        @click="removeRow(row.id)">
-                                        <TrashIcon class="h-4 w-4" />
-                                    </button>
-                                </div>
+                            <div class="flex shrink-0 items-center">
+                                <button
+                                    type="button"
+                                    class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                                    :disabled="row.id === configuringRowId"
+                                    :aria-pressed="row.id === configuringRowId"
+                                    title="Configure credentials"
+                                    aria-label="Configure credentials"
+                                    @click="configuringRowId = row.id">
+                                    <SettingIcon class="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                                    :disabled="index === 0"
+                                    title="Move up"
+                                    aria-label="Move up"
+                                    @click="moveRow(row.id, -1)">
+                                    <CaretUpIcon class="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                                    :disabled="index === rows.length - 1"
+                                    title="Move down"
+                                    aria-label="Move down"
+                                    @click="moveRow(row.id, 1)">
+                                    <CaretDownIcon class="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    class="text-primary-content hover:text-primary-content/50 focus-visible:ring-accent cursor-pointer rounded p-1 transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30"
+                                    :disabled="rows.length <= 1"
+                                    title="Remove service"
+                                    aria-label="Remove service"
+                                    @click="removeRow(row.id)">
+                                    <TrashIcon class="h-4 w-4" />
+                                </button>
+                            </div>
+                            <div
+                                v-if="supportsModelOverride(row.provider)"
+                                class="col-span-2 col-start-2 min-w-0">
+                                <TranslationChainModelField
+                                    :provider="row.provider"
+                                    :model-value="row.model"
+                                    @update:model-value="
+                                        (value: string) => updateModel(row.id, value)
+                                    " />
+                            </div>
+                            <div
+                                v-else-if="row.model.trim()"
+                                class="col-span-2 col-start-2 min-w-0">
+                                <TranslationChainModelField
+                                    v-if="pluginListUnavailable"
+                                    :provider="row.provider"
+                                    :model-value="row.model"
+                                    @update:model-value="
+                                        (value: string) => updateModel(row.id, value)
+                                    " />
+                                <p v-else class="truncate text-xs" :title="row.model">
+                                    {{ row.model }}
+                                </p>
+                                <button
+                                    v-if="showClearUnsupportedModel(row)"
+                                    type="button"
+                                    class="text-xs text-red-500 hover:underline"
+                                    @click="clearModel(row.id)">
+                                    Clear unsupported model
+                                </button>
                             </div>
                         </div>
                         <ul v-if="rowIssuesFor(index).length" class="mt-1 space-y-0.5 pl-1">
@@ -141,8 +142,8 @@
                     </li>
                 </ol>
                 <p class="text-sm opacity-70">
-                    Address, API key, protocol and the default model are shared across every row of the
-                    same provider. Only the model override on each row is independent.
+                    Address, API key, protocol and the default model are shared across every row of
+                    the same provider. Only the model override on each row is independent.
                 </p>
                 <p v-if="pluginListUnavailable" class="text-sm text-amber-500">
                     The provider list could not be loaded. Stored models still show and can be typed

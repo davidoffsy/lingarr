@@ -1,26 +1,28 @@
 <template>
-    <div class="flex flex-col gap-1">
+    <div class="min-w-0">
         <SelectComponent
             v-if="!manualOnly"
             ref="remoteSelect"
-            :options="options"
+            :options="displayOptions"
             :selected="modelValue"
             :load-on-open="true"
+            :searchable="true"
+            :allow-custom="allowTypedModel"
             size="sm"
             placeholder="Default model"
+            search-placeholder="Search or type a model id"
             :no-options="statusMessage ?? 'No models available.'"
             @update:selected="selectModel"
             @fetch-options="loadOptions" />
         <InputComponent
-            v-if="showManualInput"
+            v-else
             :model-value="draft"
             :debounce="0"
             size="sm"
-            placeholder="Or type a model id"
+            placeholder="Type a model id"
             @update:model-value="(value: string) => (draft = value)"
             @change="commitDraft"
             @blur="commitDraft" />
-        <p v-if="statusMessage" class="text-xs text-red-500">{{ statusMessage }}</p>
     </div>
 </template>
 
@@ -69,9 +71,18 @@ const modelField = computed<IPluginSettingField | null>(
 /** A provider that declares model overrides without a model catalogue only accepts typed ids. */
 const manualOnly = computed(() => manifest.value !== null && modelField.value === null)
 
-const showManualInput = computed(
-    () => manualOnly.value || statusMessage.value !== null || modelField.value?.allowCustom === true
+const allowTypedModel = computed(
+    () => modelField.value?.allowCustom === true || statusMessage.value !== null
 )
+
+const displayOptions = computed(() => {
+    const current = props.modelValue
+    if (!current || options.value.some((item) => item.value === current)) {
+        return options.value
+    }
+
+    return [...options.value, { value: current, label: current }]
+})
 
 watch(
     () => [props.modelValue, props.provider],
