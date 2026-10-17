@@ -46,9 +46,9 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
         SubtitleServiceMock
             .Setup(s => s.SelectSourceSubtitle(
                 It.IsAny<List<Subtitles>>(),
-                It.IsAny<HashSet<string>>(),
+                It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<string>()))
-            .Returns((List<Subtitles> subs, HashSet<string> sources, string ignoreCaptions) =>
+            .Returns((List<Subtitles> subs, IReadOnlyList<string> sources, string ignoreCaptions) =>
             {
                 var candidates = subs.Where(s => sources.Contains(s.Language)).ToList();
                 if (!candidates.Any()) return null;

@@ -1,4 +1,3 @@
-using Lingarr.Contracts.Interfaces;
 using Lingarr.Contracts.Models;
 using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
@@ -85,9 +84,9 @@ public class PlexRatingTrigger : IPlexRatingTrigger
         var tracks = await ProbeTracksAsync(mkvPath, media.FileName, cancellationToken);
         var candidates = PlexSubtitleCandidateMerger.Merge(sidecars, tracks, mkvPath);
 
-        var sourceLanguages = CodesInOrder(
+        var sourceLanguages = SourceLanguagePicker.CodesInOrder(
             await _settingService.GetSettingAsJson<SourceLanguage>(SettingKeys.Translation.SourceLanguages));
-        var targetLanguages = CodesInOrder(
+        var targetLanguages = SourceLanguagePicker.CodesInOrder(
             await _settingService.GetSettingAsJson<TargetLanguage>(SettingKeys.Translation.TargetLanguages));
         var ignoreCaptions = await _settingService.GetSetting(SettingKeys.Translation.IgnoreCaptions) == "true";
 
@@ -315,20 +314,4 @@ public class PlexRatingTrigger : IPlexRatingTrigger
             StreamKey = selected.StreamKey
         };
 
-    private static List<string> CodesInOrder<T>(IEnumerable<T> languages) where T : ILanguage
-    {
-        var codes = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var language in languages)
-        {
-            if (string.IsNullOrWhiteSpace(language.Code) || !seen.Add(language.Code))
-            {
-                continue;
-            }
-
-            codes.Add(language.Code);
-        }
-
-        return codes;
-    }
 }

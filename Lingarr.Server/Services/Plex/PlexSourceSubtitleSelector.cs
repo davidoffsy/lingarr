@@ -30,25 +30,23 @@ public static class PlexSourceSubtitleSelector
         IReadOnlyList<string> sourceLanguages,
         bool ignoreCaptions)
     {
-        if (candidates == null || candidates.Count == 0 || sourceLanguages == null || sourceLanguages.Count == 0)
+        if (candidates == null || sourceLanguages == null)
         {
             return null;
         }
 
-        foreach (var language in DistinctSourceLanguages(sourceLanguages))
+        var language = SourceLanguagePicker.PickConfigured(
+            candidates.Select(candidate => candidate.Language),
+            sourceLanguages);
+        if (language == null)
         {
-            var selected = SelectFrom(
-                candidates.Where(candidate =>
-                    !IsUndetermined(candidate.Language)
-                    && string.Equals(candidate.Language, language, StringComparison.OrdinalIgnoreCase)),
-                ignoreCaptions);
-            if (selected != null)
-            {
-                return selected;
-            }
+            return null;
         }
 
-        return null;
+        return SelectFrom(
+            candidates.Where(candidate =>
+                string.Equals(candidate.Language, language, StringComparison.OrdinalIgnoreCase)),
+            ignoreCaptions);
     }
 
     /// <summary>
@@ -126,20 +124,6 @@ public static class PlexSourceSubtitleSelector
         return nonForced.Count == 1 ? nonForced[0] : null;
     }
 
-    private static IEnumerable<string> DistinctSourceLanguages(IReadOnlyList<string> sourceLanguages)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var code in sourceLanguages)
-        {
-            if (string.IsNullOrWhiteSpace(code) || IsUndetermined(code) || !seen.Add(code))
-            {
-                continue;
-            }
-
-            yield return code;
-        }
-    }
-
     private static IOrderedEnumerable<PlexSourceSubtitleCandidate> Rank(
         IEnumerable<PlexSourceSubtitleCandidate> candidates) =>
         SourceSubtitleRanker.Rank(candidates, candidate => new SourceSubtitleRank(
@@ -154,6 +138,5 @@ public static class PlexSourceSubtitleSelector
         && string.IsNullOrEmpty(candidate.Caption);
 
     private static bool IsUndetermined(string language) =>
-        string.Equals(language, EmbeddedSubtitleTrack.UnknownLanguage, StringComparison.OrdinalIgnoreCase)
-        || string.Equals(language, EmbeddedSubtitleTrack.UndeterminedLanguage, StringComparison.OrdinalIgnoreCase);
+        SourceLanguagePicker.IsUndetermined(language);
 }

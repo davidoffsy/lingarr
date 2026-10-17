@@ -103,6 +103,38 @@ public class SubtitleServiceTests : IDisposable
     }
 
     [Fact]
+    public void SelectSourceSubtitle_RespectsSourceLanguageListOrder()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [
+                Sidecar("Movie.en.srt", "en"),
+                Sidecar("Movie.ja.srt", "ja")
+            ],
+            ["ja", "en"],
+            "false");
+
+        Assert.NotNull(selected);
+        Assert.Equal("ja", selected.SourceLanguage);
+        Assert.Equal("Movie.ja.srt", Path.GetFileName(selected.Subtitle.Path));
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_SkipsUndeterminedCodesInSourceList()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [
+                Sidecar("Movie.srt", "unknown"),
+                Sidecar("Movie.en.srt", "en")
+            ],
+            ["und", "unknown", "en"],
+            "false");
+
+        Assert.NotNull(selected);
+        Assert.Equal("en", selected.SourceLanguage);
+        Assert.Equal("Movie.en.srt", Path.GetFileName(selected.Subtitle.Path));
+    }
+
+    [Fact]
     public void SelectSourceSubtitle_PrefersNonSdhWhenDefaultSdhIsListedFirst()
     {
         var selected = _service.SelectSourceSubtitle(

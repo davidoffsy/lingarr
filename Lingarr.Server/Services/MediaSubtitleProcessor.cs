@@ -132,8 +132,8 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     /// <returns>True if new translation requests were created, false otherwise.</returns>
     private async Task<bool> ProcessSubtitles(
         List<Subtitles> subtitles,
-        HashSet<string> sourceLanguages,
-        HashSet<string> targetLanguages,
+        IReadOnlyList<string> sourceLanguages,
+        IReadOnlyList<string> targetLanguages,
         string ignoreCaptions,
         string? mkvPath)
     {
@@ -280,8 +280,8 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     /// <returns>A Base64 encoded string representing the hash of the current subtitle state.</returns>
     private string CreateHash(
         List<Subtitles> subtitles,
-        HashSet<string> sourceLanguages,
-        HashSet<string> targetLanguages,
+        IReadOnlyList<string> sourceLanguages,
+        IReadOnlyList<string> targetLanguages,
         string ignoreCaptions)
     {
         using var sha256 = SHA256.Create();
@@ -302,13 +302,11 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     /// </summary>
     /// <typeparam name="T">The type of language setting to retrieve (Source or Target).</typeparam>
     /// <param name="settingName">The name of the setting to retrieve.</param>
-    /// <returns>A HashSet of language codes from the configuration.</returns>
-    private async Task<HashSet<string>> GetLanguagesSetting<T>(string settingName) where T : class, ILanguage
+    /// <returns>Language codes from the configuration, in settings list order.</returns>
+    private async Task<List<string>> GetLanguagesSetting<T>(string settingName) where T : class, ILanguage
     {
         var languages = await _settingService.GetSettingAsJson<T>(settingName);
-        return languages
-            .Select(lang => lang.Code)
-            .ToHashSet();
+        return SourceLanguagePicker.CodesInOrder(languages);
     }
 
     /// <summary>

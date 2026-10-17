@@ -435,26 +435,26 @@ public class SubtitleService : ISubtitleService
     /// <inheritdoc />
     public SelectedSourceSubtitle? SelectSourceSubtitle(
         List<Subtitles> matchingSubtitles,
-        HashSet<string> sourceCodes,
+        IReadOnlyList<string> sourceCodes,
         string ignoreCaptions)
     {
         var availableLanguages = matchingSubtitles
             .Select(s => s.Language.ToLowerInvariant())
             .ToHashSet();
 
-        var sourceLanguage = availableLanguages.FirstOrDefault(lang => sourceCodes.Contains(lang));
+        // Untagged sidecars (Movie.srt next to Movie.mp4) are labeled unknown.
+        // Prefer a configured source language; otherwise let AI detect it.
+        var sourceLanguage = SourceLanguagePicker.PickConfigured(
+                matchingSubtitles.Select(s => s.Language),
+                sourceCodes)
+            ?? matchingSubtitles.Select(s => s.Language).FirstOrDefault(SourceLanguagePicker.IsUndetermined);
         if (sourceLanguage == null)
         {
-            // Untagged sidecars (Movie.srt next to Movie.mp4) are labeled unknown.
-            // Prefer a configured source language; otherwise let AI detect it.
-            sourceLanguage = availableLanguages.FirstOrDefault(lang => _languageCodeService.IsUnknown(lang));
-            if (sourceLanguage == null)
-            {
-                return null;
-            }
+            return null;
         }
 
-        var ofLanguage = matchingSubtitles.Where(s => s.Language == sourceLanguage);
+        var ofLanguage = matchingSubtitles.Where(s =>
+            string.Equals(s.Language, sourceLanguage, StringComparison.OrdinalIgnoreCase));
         var sourceSubtitle = ignoreCaptions == "true"
             ? Rank(ofLanguage.Where(s => string.IsNullOrEmpty(s.Caption))) ?? Rank(ofLanguage)
             : Rank(ofLanguage);
@@ -467,7 +467,7 @@ public class SubtitleService : ISubtitleService
         return new SelectedSourceSubtitle
         {
             Subtitle = sourceSubtitle,
-            SourceLanguage = sourceLanguage,
+            SourceLanguage = sourceLanguage.ToLowerInvariant(),
             AvailableLanguages = availableLanguages
         };
     }
