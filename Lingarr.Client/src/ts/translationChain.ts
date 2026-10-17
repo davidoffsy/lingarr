@@ -130,6 +130,23 @@ export function duplicateChainEntryIndex(entries: ITranslationChainEntry[]): num
 }
 
 /**
+ * Splits a backend `TranslationSource.DisplayName` key on the first colon. Keys are `provider:model`
+ * (bare provider when there is no model); a model id may itself contain colons, so only the first
+ * separator is the split.
+ */
+export function splitSourceDisplayName(displayName: string): { provider: string; model?: string } {
+    const separator = displayName.indexOf(':')
+    if (separator <= 0) {
+        return { provider: displayName }
+    }
+
+    const model = displayName.slice(separator + 1)
+    return model
+        ? { provider: displayName.slice(0, separator), model }
+        : { provider: displayName.slice(0, separator) }
+}
+
+/**
  * Providers of a chain, de-duplicated and lower cased in first appearance order. Used by
  * screens that only need "which providers are configured" (settings panels, template tabs).
  */

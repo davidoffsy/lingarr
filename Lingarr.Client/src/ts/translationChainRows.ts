@@ -28,17 +28,14 @@ export function createChainRow(provider: string, model = ''): IChainRow {
 /**
  * Rewrites `rows` from `entries`, keeping the id of every row that still describes the same candidate
  * at the same position. Stable ids keep the model field's uncommitted draft and focus alive while a
- * save round-trip re-derives the list from the settings store. `fallbackProvider` keeps the editor
- * non-empty when the stored value holds no usable entry; `entries` are never written back unchanged.
+ * save round-trip re-derives the list from the settings store. An empty `entries` list stays empty so
+ * the editor never pretends a default provider is the stored chain.
  */
 export function applyChainEntries(
     rows: IChainRow[],
-    entries: ITranslationChainEntry[],
-    fallbackProvider: string
+    entries: ITranslationChainEntry[]
 ): IChainRow[] {
-    const source = entries.length > 0 ? entries : [{ provider: fallbackProvider }]
-
-    return source.map((entry, index) => {
+    return entries.map((entry, index) => {
         const current = rows[index]
         const model = entry.model ?? ''
         if (current && current.provider === entry.provider && current.model === model) {

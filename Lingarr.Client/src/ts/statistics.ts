@@ -9,9 +9,9 @@ export interface Statistics {
     translationsByService: Record<string, number>
     subtitlesByLanguage: Record<string, number>
     /**
-     * Translated lines per source, keyed by `provider (model)` with a bare provider when the candidate
-     * has no model override. Unlike `translationsByService`, which counts finished files, this counts
-     * the lines each source really translated, so fallbacks show up per source.
+     * Translated lines per source, keyed by backend `TranslationSource.DisplayName` (`provider:model`,
+     * or a bare provider when there is no model). Unlike `translationsByService`, which counts finished
+     * files, this counts the lines each source really translated, so fallbacks show up per source.
      */
     linesBySource: Record<string, number>
 }
