@@ -54,7 +54,7 @@ public class BilingualAssWriterTests
         var output = await Write(Cue(0, 1000, ["A"], ["B"]));
 
         Assert.Contains("LingarrTarget,Noto Sans CJK SC,64,&H00FFFFFF", output);
-        Assert.Contains("LingarrSource,Noto Sans CJK SC,38,&H005AA3C4", output);
+        Assert.Contains("LingarrSource,Noto Sans CJK SC,38,&H0066D9FF", output);
         Assert.Contains("&H00000000", output);
         Assert.Contains(",2,1,2,20,20,16,1", output);
     }

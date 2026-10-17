@@ -22,8 +22,8 @@ public static class BilingualAssOptions
     /// <summary>White, ASS <c>&amp;HAABBGGRR</c>.</summary>
     public const string TargetPrimaryColour = "&H00FFFFFF";
 
-    /// <summary>Khaki / earth yellow <c>#C4A35A</c> as ASS BGR <c>&amp;H005AA3C4</c>.</summary>
-    public const string SourcePrimaryColour = "&H005AA3C4";
+    /// <summary>Light yellow <c>#FFD966</c> as ASS BGR <c>&amp;H0066D9FF</c>.</summary>
+    public const string SourcePrimaryColour = "&H0066D9FF";
 
     public const string SecondaryColour = "&H000000FF";
     public const string OutlineColour = "&H00000000";
