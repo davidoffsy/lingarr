@@ -57,8 +57,8 @@ public static class PlexSubtitleCandidateMerger
         IsEmbedded = false,
         TrackIndex = sidecar.TrackIndex ?? -1,
         SidecarOrder = order,
-        IsForced = PlexSubtitleCaptionFlags.IsForced(sidecar.Caption),
-        IsHearingImpaired = PlexSubtitleCaptionFlags.IsHearingImpaired(sidecar.Caption)
+        IsForced = SubtitleCaptionFlags.IsForced(sidecar.Caption),
+        IsHearingImpaired = SubtitleCaptionFlags.IsHearingImpaired(sidecar.Caption)
     };
 
     private static PlexSourceSubtitleCandidate FromTrack(EmbeddedSubtitleTrack track, string mkvPath) => new()
@@ -70,7 +70,7 @@ public static class PlexSubtitleCandidateMerger
         IsEmbedded = true,
         TrackIndex = track.Index,
         SidecarOrder = int.MaxValue,
-        IsForced = PlexSubtitleCaptionFlags.IsForced(track.Caption, track.IsForced),
-        IsHearingImpaired = PlexSubtitleCaptionFlags.IsHearingImpaired(track.Caption, track.IsHearingImpaired)
+        IsForced = SubtitleCaptionFlags.IsForced(track.Caption, track.IsForced),
+        IsHearingImpaired = SubtitleCaptionFlags.IsHearingImpaired(track.Caption, track.IsHearingImpaired)
     };
 }

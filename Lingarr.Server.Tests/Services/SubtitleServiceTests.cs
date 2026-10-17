@@ -102,15 +102,133 @@ public class SubtitleServiceTests : IDisposable
         Assert.Null(selected);
     }
 
+    [Fact]
+    public void SelectSourceSubtitle_PrefersNonSdhWhenDefaultSdhIsListedFirst()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [
+                Embedded(2, "en", caption: "sdh"),
+                Embedded(3, "en")
+            ],
+            ["en"],
+            "false");
+
+        Assert.NotNull(selected);
+        Assert.Equal(3, selected.Subtitle.TrackIndex);
+        Assert.Equal(string.Empty, selected.Subtitle.Caption);
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_PrefersNonHearingImpairedWhenDefaultFlagsMatch()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [
+                Embedded(4, "en", caption: "hi"),
+                Embedded(5, "en", caption: "cc"),
+                Embedded(2, "en")
+            ],
+            ["en"],
+            "false");
+
+        Assert.NotNull(selected);
+        Assert.Equal(2, selected.Subtitle.TrackIndex);
+        Assert.Equal(string.Empty, selected.Subtitle.Caption);
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_FallsBackToSdhWhenItIsTheOnlyTrack()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [Embedded(2, "en", caption: "sdh")],
+            ["en"],
+            "false");
+
+        Assert.NotNull(selected);
+        Assert.Equal(2, selected.Subtitle.TrackIndex);
+        Assert.Equal("sdh", selected.Subtitle.Caption);
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_PrefersCleanSidecarWhenSdhSidecarIsListedFirst()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [
+                Sidecar("Movie.en.sdh.srt", "en", caption: "sdh"),
+                Sidecar("Movie.en.srt", "en")
+            ],
+            ["en"],
+            "false");
+
+        Assert.NotNull(selected);
+        Assert.Equal("Movie.en.srt", Path.GetFileName(selected.Subtitle.Path));
+        Assert.Equal(string.Empty, selected.Subtitle.Caption);
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_PrefersSidecarOverEmbeddedDefaultSdh()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [
+                Embedded(2, "en", caption: "sdh"),
+                Sidecar("Movie.en.srt", "en")
+            ],
+            ["en"],
+            "false");
+
+        Assert.NotNull(selected);
+        Assert.False(selected.Subtitle.IsEmbedded);
+        Assert.Equal("Movie.en.srt", Path.GetFileName(selected.Subtitle.Path));
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_IgnoreCaptions_FallsBackToSdhWhenNoCleanTrackExists()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [Embedded(2, "en", caption: "sdh")],
+            ["en"],
+            "true");
+
+        Assert.NotNull(selected);
+        Assert.Equal("sdh", selected.Subtitle.Caption);
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_PrefersNonForcedOverForcedWhenListedFirst()
+    {
+        var selected = _service.SelectSourceSubtitle(
+            [
+                Embedded(2, "en", caption: "forced"),
+                Embedded(3, "en")
+            ],
+            ["en"],
+            "false");
+
+        Assert.NotNull(selected);
+        Assert.Equal(3, selected.Subtitle.TrackIndex);
+        Assert.Equal(string.Empty, selected.Subtitle.Caption);
+    }
+
     private void Touch(string fileName) =>
         File.WriteAllText(Path.Combine(_directory, fileName), "1\n00:00:01,000 --> 00:00:02,000\nHi\n");
 
-    private static Subtitles Sidecar(string fileName, string language) => new()
+    private static Subtitles Sidecar(string fileName, string language, string caption = "") => new()
     {
         Path = $"/movies/{fileName}",
         FileName = Path.GetFileNameWithoutExtension(fileName),
         Language = language,
-        Caption = "",
+        Caption = caption,
         Format = ".srt"
+    };
+
+    private static Subtitles Embedded(int index, string language, string caption = "") => new()
+    {
+        Path = "/movies/Movie.mkv",
+        FileName = "Movie",
+        Language = language,
+        Caption = caption,
+        Format = ".srt",
+        IsEmbedded = true,
+        TrackIndex = index,
+        CodecName = "subrip"
     };
 }

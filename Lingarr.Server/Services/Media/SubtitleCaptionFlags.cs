@@ -1,10 +1,10 @@
-namespace Lingarr.Server.Services.Plex;
+namespace Lingarr.Server.Services.Media;
 
 /// <summary>
-/// Forced / SDH signals for Plex source ranking. Sidecar files only expose these via
+/// Forced / SDH signals for source ranking. Sidecar files only expose these via
 /// the filename caption token; embedded tracks also have MKV disposition flags.
 /// </summary>
-public static class PlexSubtitleCaptionFlags
+public static class SubtitleCaptionFlags
 {
     public static bool IsForced(string? caption, bool embeddedFlag = false) =>
         embeddedFlag || ContainsFlag(caption, "forced");

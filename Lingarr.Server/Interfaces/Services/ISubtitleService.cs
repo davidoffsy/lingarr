@@ -75,8 +75,11 @@ public interface ISubtitleService
     Task<List<Subtitles>> GetSubtitles(string path, string fileName);
 
     /// <summary>
-    /// Selects the source subtitle from matching subtitles by finding the first available source language
-    /// and selecting the appropriate subtitle file, respecting the ignoreCaptions setting.
+    /// Selects the source subtitle from matching subtitles by finding an available source language
+    /// and ranking candidates: sidecar over embedded, non-forced over forced, non-SDH/HI/CC over
+    /// hearing-impaired, then lower track index. MKV Default is not used.
+    /// When <paramref name="ignoreCaptions"/> is <c>true</c>, an empty caption is preferred before
+    /// that ranking; captioned tracks remain valid fallbacks.
     /// When no configured source language is present, falls back to an untagged (<c>unknown</c>/<c>und</c>) sidecar.
     /// </summary>
     /// <param name="subtitles">The list of subtitle files to search.</param>

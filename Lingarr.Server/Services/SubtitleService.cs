@@ -3,6 +3,7 @@ using Lingarr.Contracts.Translation;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Subtitle;
 using Lingarr.Server.Models.FileSystem;
+using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Subtitle;
 using Lingarr.Server.Services.Translation.Attribution;
 using SubtitleValidationOptions = Lingarr.Server.Models.SubtitleValidationOptions;
@@ -453,10 +454,11 @@ public class SubtitleService : ISubtitleService
             }
         }
 
+        var ofLanguage = matchingSubtitles.Where(s => s.Language == sourceLanguage);
         var sourceSubtitle = ignoreCaptions == "true"
-            ? matchingSubtitles.FirstOrDefault(s => s.Language == sourceLanguage && string.IsNullOrEmpty(s.Caption))
-                ?? matchingSubtitles.FirstOrDefault(s => s.Language == sourceLanguage)
-            : matchingSubtitles.FirstOrDefault(s => s.Language == sourceLanguage);
+            ? Rank(ofLanguage.Where(s => string.IsNullOrEmpty(s.Caption))).FirstOrDefault()
+                ?? Rank(ofLanguage).FirstOrDefault()
+            : Rank(ofLanguage).FirstOrDefault();
 
         if (sourceSubtitle == null)
         {
@@ -470,6 +472,18 @@ public class SubtitleService : ISubtitleService
             AvailableLanguages = availableLanguages
         };
     }
+
+    /// <summary>
+    /// Dialogue quality for a translation source. MKV Default is ignored because
+    /// release groups often mark SDH as default. LINQ to Objects is stable, so
+    /// sidecar original order is preserved among equal ranks.
+    /// </summary>
+    private static IOrderedEnumerable<Subtitles> Rank(IEnumerable<Subtitles> subtitles) =>
+        subtitles
+            .OrderBy(subtitle => subtitle.IsEmbedded)
+            .ThenBy(subtitle => SubtitleCaptionFlags.IsForced(subtitle.Caption))
+            .ThenBy(subtitle => SubtitleCaptionFlags.IsHearingImpaired(subtitle.Caption))
+            .ThenBy(subtitle => subtitle.IsEmbedded ? subtitle.TrackIndex ?? int.MaxValue : 0);
 
     private static ISubtitleParser CreateParser(string extension) =>
         extension.ToLowerInvariant() switch
