@@ -199,7 +199,7 @@ Your own gateway over one explicitly selected, non-streaming protocol: `openai_c
 | **Environment Variable**        | **Description**                                                                 |
 |---------------------------------|---------------------------------------------------------------------------------|
 | `CUSTOM_PROTOCOL`               | `openai_chat`, `openai_responses`, or `anthropic_messages`. Default `openai_chat`. The endpoint path, request body and parsed response follow this setting; a full path of another protocol is recognised and replaced, never guessed. |
-| `CUSTOM_ENDPOINT`               | Base URL or full endpoint path of the selected protocol. A bare base URL gets `/v1/chat/completions`, `/v1/responses`, or `/v1/messages` appended; a URL that already ends in `/v1` gets the matching suffix; a full path is used as it is. Example: `http://localhost:8000/v1`. |
+| `CUSTOM_ENDPOINT`               | Absolute `http` or `https` URL: a base URL or full endpoint path of the selected protocol. A bare base URL gets `/v1/chat/completions`, `/v1/responses`, or `/v1/messages` appended; a URL that already ends in `/v1` gets the matching suffix; a full path is used as it is. Query strings are kept; Azure `/deployments/{id}/...` paths are not rewritten. Example: `http://localhost:8000/v1`. |
 | `CUSTOM_MODEL`                  | The model to use. Load the model list with **Test connection**, or type a model id when the gateway has no `/models` endpoint. |
 | `CUSTOM_API_KEY`                | Optional. Bearer token for the OpenAI protocols, or the `x-api-key` value for Anthropic Messages. Stored encrypted. |
 | `CUSTOM_ANTHROPIC_VERSION`      | `anthropic-version` header for `anthropic_messages`. Default `2023-06-01`. Ignored by the OpenAI protocols. |
@@ -255,6 +255,12 @@ An entry may also be an object with a `provider` and an optional `model`, so sev
 ```json
 [{"provider":"custom","model":"model-a"},{"provider":"custom","model":"model-b"},{"provider":"deepl"}]
 ```
+
+Fallback behaviour is the same in the web UI and when `SERVICE_TYPE` is set from the environment:
+
+- A rate limit, request timeout (`408` or the configured request timeout, default 5 minutes), or gateway error (`502`, `503`, `504`) is retried on the current candidate, then the next entry is tried.
+- HTTP `401` (or a missing address / API key) skips the remaining models of that provider.
+- With batch translation enabled, a failed batch candidate does not fail the file: unfinished lines continue down the chain, including candidates that can only translate line by line.
 
 The supported values are:
 

@@ -13,9 +13,12 @@ public class M0032_TranslationSourceAttribution : Migration
     {
         if (!Schema.Table("translation_request_lines").Column("model").Exists())
         {
+            // TEXT rather than VARCHAR(100): gateway model ids (HuggingFace repos,
+            // fine-tuned OpenAI ids, Azure deployment names) routinely exceed 100 chars.
+            // Installs that already applied a VARCHAR(100) column are widened by M0035.
             Alter.Table("translation_request_lines")
                 .AddColumn("model")
-                .AsString(100)
+                .AsCustom("TEXT")
                 .Nullable();
         }
 

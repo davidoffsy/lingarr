@@ -23,7 +23,11 @@ public class M0034_SeedCustomMessagesSettings : Migration
 
     public override void Down()
     {
-        Delete.FromTable("settings").Row(new { key = "custom_messages_request_template" });
-        Delete.FromTable("settings").Row(new { key = "custom_anthropic_version" });
+        Execute.WithConnection((connection, transaction) =>
+            GuardedSettingSeed.DeleteIfCurrentValue(connection, transaction, new Dictionary<string, string>
+            {
+                ["custom_messages_request_template"] = string.Empty,
+                ["custom_anthropic_version"] = "2023-06-01"
+            }));
     }
 }

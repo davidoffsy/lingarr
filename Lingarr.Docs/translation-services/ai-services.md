@@ -26,6 +26,25 @@ All AI services follow the same pattern: select the service, provide an API key,
 
 Every setting can also be provided as an environment variable, listed per service below. See [Configuration](/getting-started/configuration) for more details.
 
+## Translation chain and fallback
+
+The service list under **Settings > Services** is an ordered fallback chain. Each entry is one provider plus an optional model, so the same provider can appear more than once with a different model:
+
+```text
+custom (model-a) → custom (model-b) → deepl
+```
+
+When a candidate fails, Lingarr follows this sequence:
+
+1. Retryable errors are retried on **that same candidate** first, up to the configured retry limit. Retryable means HTTP `429`, `408`, `502`, `503`, `504`, and a request that exceeds the configured request timeout (default 5 minutes).
+2. If it still fails, the **next entry** in the chain is tried.
+3. HTTP `401`, or a missing address / API key that makes the whole provider unusable, skips the remaining models of **that provider** and continues with the next provider. A missing model on one entry only skips that entry, so a later line of the same provider with a model override can still run.
+4. Cancelling the job stops immediately. Cancellation is not turned into a fallback, and a half-finished file is not marked completed.
+
+Batch translation uses the same list. If every batch-capable candidate fails, unfinished lines are handed to later candidates. A later candidate that can only translate line by line still completes those lines; the file does not fail as a whole.
+
+Endpoints for [LocalAI](#localai) and [Custom](#custom) must be absolute `http` or `https` URLs. Other schemes are rejected as a configuration error. Query strings are kept, and Azure OpenAI paths of the form `/deployments/{id}/...` are not rewritten.
+
 ## Untagged source subtitles
 
 Release groups sometimes ship `Movie.mp4` plus `Movie.srt` with no language tag in the filename. Lingarr labels those files `unknown`.
@@ -187,7 +206,7 @@ Custom talks to your own gateway over one explicitly selected, non-streaming pro
 | **Environment Variable** | **Description**                                                                                                           |
 |--------------------------|---------------------------------------------------------------------------------------------------------------------------|
 | `CUSTOM_PROTOCOL` | `openai_chat`, `openai_responses`, or `anthropic_messages`. Default `openai_chat`. Switching keeps the same address, key and model, but the gateway has to serve the selected protocol and every protocol keeps its own request template. |
-| `CUSTOM_ENDPOINT` | Base URL or a full endpoint path of the selected protocol. Example: `http://localhost:8000/v1`, `https://gateway.example.com/v1/responses`, or `https://gateway.example.com/v1/messages`. |
+| `CUSTOM_ENDPOINT` | Absolute `http` or `https` URL: a base URL or a full endpoint path of the selected protocol. Example: `http://localhost:8000/v1`, `https://gateway.example.com/v1/responses`, or `https://gateway.example.com/v1/messages`. |
 | `CUSTOM_MODEL` | The model to use. Load the gateway's model list with **Test connection**, or type a model id.                               |
 | `CUSTOM_API_KEY` | Optional. Sent as `Authorization: Bearer` for the OpenAI protocols and as `x-api-key` for Anthropic Messages. Stored encrypted. |
 | `CUSTOM_ANTHROPIC_VERSION` | Value of the `anthropic-version` header when the protocol is `anthropic_messages`. Default `2023-06-01`. Ignored by the OpenAI protocols. |
@@ -205,7 +224,7 @@ As everywhere else, each variable also accepts the `_FILE` variant, see [Configu
 - `openai_responses` posts the same prompts as `input` messages to the responses endpoint and reads `output[].content[].text`; batch jobs request structured output through `text.format`. A response only counts as success when it completed with text — refusals, `incomplete`/`failed` responses, non-final states and empty output fail the candidate instead of being written back as a translation.
 - `anthropic_messages` posts to the Messages endpoint. The system prompt is a top-level `system` field, not a chat `system` role, and `max_tokens` is required. The reply is read from `content[]` text blocks; thinking blocks are ignored. Batch jobs ask for a `tool_use` block named `record_translation_batch` and, when the gateway does not return one, fall back to a JSON array in the text. A refusal (`stop_reason: refusal`), a truncation (`stop_reason: max_tokens`), and an empty body fail the candidate. Official Anthropic is unchanged and still accepts partial text.
 
-**Addresses.** Custom looks at what you enter and resolves the URL of the selected protocol from it:
+**Addresses.** The endpoint must be an absolute `http` or `https` URL; other schemes are rejected as a configuration error. Custom looks at what you enter and resolves the URL of the selected protocol from it:
 
 - a base URL such as `http://localhost:8000` becomes `http://localhost:8000/v1/chat/completions`;
 - a URL that already ends in `/v1`, such as `http://localhost:8000/v1`, becomes the same `.../v1/chat/completions`;
@@ -221,4 +240,4 @@ Other known API paths (`/chat/completions`, `/responses`, `/messages`, `/complet
 
 **Request template.** Each protocol has its own default body, stored independently from the others and from `local_ai_chat_request_template`, `openai_request_template` and `anthropic_request_template`: `custom_chat_request_template` for `openai_chat` (`model` + `messages`), `custom_responses_request_template` for `openai_responses` (`model` + `input`), and `custom_messages_request_template` for `anthropic_messages` (`model`, `max_tokens`, `system`, `messages`). **Settings > Services > Request Settings** follows `custom_protocol`, so the editor always shows the template that is actually in use.
 
-**Translation chain.** A chain entry is one provider plus an optional model, so `custom` can appear more than once with a different model on every line. When a gateway answers `401`, Lingarr treats the credentials as wrong for that gateway and skips its remaining models before trying the next provider in the chain; a missing model, a rate limit or a timeout moves on after the normal retries. When the lines of one subtitle end up translated by more than one model, the translator info and the per-line view report the mixed sources.
+**Translation chain.** Custom follows the same [translation chain](#translation-chain-and-fallback) rules as every other provider: it can appear more than once with a different model on every line, a `401` skips the rest of its models, and a timeout or rate limit moves on after the normal retries. When the lines of one subtitle end up translated by more than one model, the translator info and the per-line view report the mixed sources.

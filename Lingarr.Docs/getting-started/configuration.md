@@ -123,6 +123,12 @@ An entry may also carry its own model, so several models of the same provider ca
 [{"provider":"custom","model":"model-a"},{"provider":"custom","model":"model-b"},{"provider":"deepl"}]
 ```
 
+Fallback behaviour is the same in the web UI and when `SERVICE_TYPE` is set from the environment:
+
+- A rate limit, request timeout (`408` or the configured request timeout, default 5 minutes), or gateway error (`502`, `503`, `504`) is retried on the current candidate, then the next entry is tried.
+- HTTP `401` (or a missing address / API key) skips the remaining models of that provider.
+- With batch translation enabled, a failed batch candidate does not fail the file: unfinished lines continue down the chain, including candidates that can only translate line by line.
+
 The supported values are:
 
 - **[AI services](/translation-services/ai-services)**: [`openai`](/translation-services/ai-services#openai), [`anthropic`](/translation-services/ai-services#anthropic), [`gemini`](/translation-services/ai-services#gemini), [`deepseek`](/translation-services/ai-services#deepseek), [`mistral`](/translation-services/ai-services#mistral), [`xai`](/translation-services/ai-services#xai), [`localai`](/translation-services/ai-services#localai) and [`custom`](/translation-services/ai-services#custom)

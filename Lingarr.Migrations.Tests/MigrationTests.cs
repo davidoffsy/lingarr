@@ -76,6 +76,13 @@ public class MigrationTests
             Assert.Equal("openai_chat", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
             command.CommandText = "SELECT value FROM settings WHERE key = 'custom_anthropic_version'";
             Assert.Equal("2023-06-01", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+            command.CommandText =
+                "SELECT type FROM pragma_table_info('translation_request_lines') WHERE name = 'model'";
+            Assert.Equal(
+                "TEXT",
+                Convert.ToString(await command.ExecuteScalarAsync(TestContext.Current.CancellationToken)),
+                StringComparer.OrdinalIgnoreCase);
         }
         finally
         {
@@ -184,6 +191,58 @@ public class MigrationTests
         }
     }
 
+    [Fact]
+    public async Task Sqlite_CustomProviderSettingsDownKeepsPreexistingKeys()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"lingarr_test_{Guid.NewGuid()}.db");
+        try
+        {
+            var connectionString = $"Data Source={dbPath}";
+            var services = new ServiceCollection();
+            services.AddFluentMigrator(connectionString, "sqlite");
+
+            var serviceProvider = services.BuildServiceProvider();
+            using var scope = serviceProvider.CreateScope();
+            var runner = scope.ServiceProvider.GetRequiredService<IMigrationRunner>();
+
+            runner.MigrateUp(30);
+            await using (var seedConnection = new SqliteConnection(connectionString))
+            {
+                await seedConnection.OpenAsync(TestContext.Current.CancellationToken);
+                await using var command = seedConnection.CreateCommand();
+                command.CommandText =
+                    "INSERT INTO settings (key, value) VALUES ('custom_endpoint', 'http://hand-edited'), ('custom_protocol', 'openai_responses')";
+                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+
+            runner.MigrateUp();
+            runner.MigrateDown(30);
+
+            await using var connection = new SqliteConnection(connectionString);
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var valueCommand = connection.CreateCommand();
+            valueCommand.CommandText = "SELECT value FROM settings WHERE key = 'custom_endpoint'";
+            Assert.Equal("http://hand-edited",
+                await valueCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            valueCommand.CommandText = "SELECT value FROM settings WHERE key = 'custom_protocol'";
+            Assert.Equal("openai_responses",
+                await valueCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+
+            // Keys this migration actually inserted (empty defaults) are removed.
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_model"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_api_key"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_chat_request_template"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_responses_request_template"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_messages_request_template"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_anthropic_version"));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(dbPath)) File.Delete(dbPath);
+        }
+    }
+
     private static async Task<bool> ColumnExistsAsync(SqliteConnection connection, string table, string column)
     {
         await using var command = connection.CreateCommand();
@@ -243,6 +302,11 @@ public class MigrationTests
         await using var connection = new MySqlConnection(connectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+
+        await using var command = new MySqlCommand(
+            "SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'translation_request_lines' AND COLUMN_NAME = 'model'",
+            connection);
+        Assert.Equal("text", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -258,5 +322,10 @@ public class MigrationTests
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(TestContext.Current.CancellationToken);
         Assert.Equal(System.Data.ConnectionState.Open, connection.State);
+
+        await using var command = new NpgsqlCommand(
+            "SELECT data_type FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'translation_request_lines' AND column_name = 'model'",
+            connection);
+        Assert.Equal("text", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
     }
 }

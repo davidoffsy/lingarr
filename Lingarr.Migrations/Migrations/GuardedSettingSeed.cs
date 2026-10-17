@@ -27,6 +27,29 @@ internal static class GuardedSettingSeed
         }
     }
 
+    /// <summary>
+    /// Deletes settings rows that still hold <paramref name="expectedValues"/>. Seed
+    /// <c>Down</c> methods use this so a key that already existed, or was later edited,
+    /// is not removed: only rows left at the seeded default (the ones this migration
+    /// inserted and nobody changed) are deleted.
+    /// </summary>
+    public static void DeleteIfCurrentValue(
+        IDbConnection connection,
+        IDbTransaction transaction,
+        IReadOnlyDictionary<string, string> expectedValues)
+    {
+        foreach (var (key, value) in expectedValues)
+        {
+            using var command = CreateCommand(
+                connection,
+                transaction,
+                $"DELETE FROM settings WHERE {Quote(connection, "key")} = @key AND {Quote(connection, "value")} = @value");
+            AddParameter(command, "@key", key);
+            AddParameter(command, "@value", value);
+            command.ExecuteNonQuery();
+        }
+    }
+
     private static bool SettingExists(IDbConnection connection, IDbTransaction transaction, string key)
     {
         using var command = CreateCommand(

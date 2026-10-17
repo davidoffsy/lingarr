@@ -24,7 +24,11 @@ public class M0033_SeedCustomProtocolSettings : Migration
 
     public override void Down()
     {
-        Delete.FromTable("settings").Row(new { key = "custom_protocol" });
-        Delete.FromTable("settings").Row(new { key = "custom_responses_request_template" });
+        Execute.WithConnection((connection, transaction) =>
+            GuardedSettingSeed.DeleteIfCurrentValue(connection, transaction, new Dictionary<string, string>
+            {
+                ["custom_protocol"] = "openai_chat",
+                ["custom_responses_request_template"] = string.Empty
+            }));
     }
 }
