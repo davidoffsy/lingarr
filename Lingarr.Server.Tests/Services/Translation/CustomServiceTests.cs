@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Models.Batch;
+using Lingarr.Core;
 using Lingarr.Core.Configuration;
 using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
@@ -27,6 +28,7 @@ public class CustomServiceTests
     private const string BaseEndpoint = "http://localhost:8000/v1";
     private const string ChatEndpoint = "http://localhost:8000/v1/chat/completions";
     private const string ResponsesEndpoint = "http://localhost:8000/v1/responses";
+    private const string MessagesEndpoint = "http://localhost:8000/v1/messages";
 
     /// <summary>
     /// A response where the model left an unescaped quote inside a translated line.
@@ -49,6 +51,8 @@ public class CustomServiceTests
         _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
 
         _settingsMock.Setup(settingService => settingService.GetEncryptedSetting(It.IsAny<string>()))
+            .ReturnsAsync(string.Empty);
+        _settingsMock.Setup(settingService => settingService.GetSetting(It.IsAny<string>()))
             .ReturnsAsync(string.Empty);
 
         _service = new CustomService(
@@ -114,6 +118,7 @@ public class CustomServiceTests
             settingService => settingService.GetEncryptedSetting(SettingKeys.Translation.Custom.ApiKey),
             Times.AtLeastOnce());
         VerifyAuthorization("Bearer " + apiKey, Times.Once());
+        VerifyHeaderAbsent("x-api-key");
     }
 
     [Fact]
@@ -409,17 +414,274 @@ public class CustomServiceTests
     [Fact]
     public async Task TranslateAsync_UnsupportedProtocol_ThrowsConfigurationError()
     {
-        // anthropic_messages arrives in a later change; until then the value must fail loudly
-        // instead of silently falling back to Chat Completions.
-        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        UseSettings(BaseEndpoint, protocol: "not_a_protocol");
         SetupResponse(() => ChatResponse("Hola"));
 
         var exception = await Assert.ThrowsAsync<TranslationConfigurationException>(
             () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
 
+        Assert.Contains("not_a_protocol", exception.Message);
         Assert.Contains("anthropic_messages", exception.Message);
         Assert.Contains("openai_responses", exception.Message);
         VerifyRequestsSent(0);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesProtocol_PostsToMessagesEndpoint()
+    {
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        SetupResponse(() => MessagesResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestUri(MessagesEndpoint, Times.Once());
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesProtocol_FullEndpointPath_IsPreserved()
+    {
+        UseSettings(MessagesEndpoint, protocol: "anthropic_messages");
+        SetupResponse(() => MessagesResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestUri(MessagesEndpoint, Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesProtocol_ChatPath_IsReplaced()
+    {
+        UseSettings(ChatEndpoint, protocol: "anthropic_messages");
+        SetupResponse(() => MessagesResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        VerifyRequestUri(MessagesEndpoint, Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesProtocol_UsesItsOwnTemplate()
+    {
+        UseSettings(
+            BaseEndpoint,
+            protocol: "anthropic_messages",
+            chatTemplate: "{\"sentinel\":true}",
+            responsesTemplate: "{\"sentinel\":true}",
+            messagesTemplate: "");
+        var bodies = CaptureRequestBodies(() => MessagesResponse("Hola"));
+
+        await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Single(bodies);
+        using var document = JsonDocument.Parse(bodies[0]);
+        Assert.False(document.RootElement.TryGetProperty("sentinel", out _));
+        Assert.False(document.RootElement.TryGetProperty("input", out _));
+        Assert.Contains("Translate from", document.RootElement.GetProperty("system").GetString());
+        var messages = document.RootElement.GetProperty("messages");
+        Assert.Equal("user", messages[0].GetProperty("role").GetString());
+        Assert.DoesNotContain("system", Roles(messages));
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesProtocol_SendsApiKeyHeader_NotBearer()
+    {
+        const string apiKey = "sk-ant-custom";
+        _settingsMock.Setup(settingService => settingService.GetEncryptedSetting(SettingKeys.Translation.Custom.ApiKey))
+            .ReturnsAsync(apiKey);
+        UseSettings(BaseEndpoint, protocol: " Anthropic_Messages ", aiThinking: "on", aiMaxTokens: "4096");
+        var bodies = CaptureRequestBodies(() => MessagesResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyHeader("x-api-key", apiKey, Times.Once());
+        VerifyHeader("anthropic-version", "2023-06-01", Times.Once());
+        VerifyHeader("User-Agent", $"{LingarrVersion.Name}/{LingarrVersion.Number}", Times.Once());
+        VerifyHeaderAbsent("Authorization");
+        using var document = JsonDocument.Parse(bodies[0]);
+        Assert.Equal(4096, document.RootElement.GetProperty("max_tokens").GetInt32());
+        Assert.False(document.RootElement.TryGetProperty("thinking", out _));
+        _settingsMock.Verify(
+            settingService => settingService.GetEncryptedSetting(SettingKeys.Translation.Anthropic.ApiKey),
+            Times.Never());
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesProtocol_MissingVersion_IsConfigurationError()
+    {
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages", anthropicVersion: " ");
+
+        var exception = await Assert.ThrowsAsync<TranslationConfigurationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        Assert.Contains("custom_anthropic_version", exception.Message);
+        VerifyRequestsSent(0);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesRefusal_IsNotRetried()
+    {
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        SetupResponse(() => MessagesResponse("No", "refusal"));
+
+        var exception = await Assert.ThrowsAsync<TranslationUnusableResponseException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        Assert.Contains("refused", exception.Message);
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesTruncation_IsNotRetried()
+    {
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        SetupResponse(() => MessagesResponse("Hol", "max_tokens"));
+
+        await Assert.ThrowsAsync<TranslationUnusableResponseException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MessagesUnauthorized_DoesNotRetry()
+    {
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        SetupResponse(() => new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.Unauthorized,
+            Content = new StringContent("{\"error\":\"invalid x-api-key\"}", Encoding.UTF8, "application/json")
+        });
+
+        await Assert.ThrowsAsync<TranslationAuthenticationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_MessagesProtocol_MissingPosition_IsCompletedByFillLoop()
+    {
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        SetupResponseSequence(
+            MessagesToolResponse([(1, "Hola")]),
+            MessagesToolResponse([(2, "Mundo")]));
+
+        var filled = await BatchFillLoop.FillAsync(
+            _service, Batch(), "en", "es", new Mock<ILogger>().Object, CancellationToken.None);
+
+        Assert.Equal(2, filled.Count);
+        Assert.Equal("Hola", filled[1]);
+        Assert.Equal("Mundo", filled[2]);
+        VerifyRequestsSent(2);
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_MessagesProtocol_TextJson_DoesNotRequireToolUse()
+    {
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        SetupResponse(() => MessagesResponse(ValidJson));
+
+        var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
+
+        Assert.Equal("Hola", result[1]);
+        Assert.Equal("Mundo", result[2]);
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task ProofreadAsync_MessagesProtocol_PostsMessagesRequest()
+    {
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages");
+        var bodies = CaptureRequestBodies(() => MessagesResponse("Hola corregido"));
+
+        var result = await _service.ProofreadAsync("Hello", "Hola", "en", "es", CancellationToken.None);
+
+        Assert.Equal("Hola corregido", result);
+        using var document = JsonDocument.Parse(bodies[0]);
+        Assert.Contains("proofread the line", document.RootElement.GetProperty("system").GetString());
+        Assert.Equal("Hola", document.RootElement.GetProperty("messages")[0].GetProperty("content").GetString());
+        VerifyRequestUri(MessagesEndpoint, Times.Once());
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_MessagesStreamingTemplate_IsRejectedWithoutRequest()
+    {
+        const string streamingTemplate =
+            "{\"model\":\"{model}\",\"max_tokens\":8192,\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"{userMessage}\"}]}";
+        UseSettings(BaseEndpoint, protocol: "anthropic_messages", messagesTemplate: streamingTemplate);
+
+        var exception = await Assert.ThrowsAsync<TranslationConfigurationException>(
+            () => _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None));
+
+        Assert.Contains("\"stream\": true", exception.Message);
+        VerifyRequestsSent(0);
+    }
+
+    [Fact]
+    public async Task GetModels_MessagesProtocol_UsesAnthropicHeaders()
+    {
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.Custom.Endpoint))
+            .ReturnsAsync(BaseEndpoint);
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.Custom.Protocol))
+            .ReturnsAsync("anthropic_messages");
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.Custom.AnthropicVersion))
+            .ReturnsAsync("2023-06-01");
+        _settingsMock.Setup(settingService => settingService.GetEncryptedSetting(SettingKeys.Translation.Custom.ApiKey))
+            .ReturnsAsync("secret");
+        SetupResponse(() => JsonResponse(new { data = new[] { new { id = "claude-a" } } }));
+
+        var result = await _service.GetModels();
+
+        Assert.Null(result.Message);
+        Assert.Single(result.Options);
+        VerifyRequestUri("http://localhost:8000/v1/models", Times.Once());
+        VerifyHeader("x-api-key", "secret", Times.Once());
+        VerifyHeader("anthropic-version", "2023-06-01", Times.Once());
+        VerifyHeader("User-Agent", $"{LingarrVersion.Name}/{LingarrVersion.Number}", Times.Once());
+        VerifyHeaderAbsent("Authorization");
+    }
+
+    [Fact]
+    public async Task GetModels_UnsupportedProtocol_ReturnsMessage()
+    {
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.Custom.Endpoint))
+            .ReturnsAsync(BaseEndpoint);
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.Custom.Protocol))
+            .ReturnsAsync("not_a_protocol");
+
+        var result = await _service.GetModels();
+
+        Assert.NotNull(result.Message);
+        Assert.Contains("not_a_protocol", result.Message);
+        Assert.Contains("anthropic_messages", result.Message);
+        Assert.Empty(result.Options);
+        VerifyRequestsSent(0);
+    }
+
+    [Fact]
+    public async Task GetModels_MessagesProtocol_MissingCatalogue_ReturnsMessage()
+    {
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.Custom.Endpoint))
+            .ReturnsAsync(BaseEndpoint);
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.Custom.Protocol))
+            .ReturnsAsync("anthropic_messages");
+        _settingsMock.Setup(settingService => settingService.GetSetting(SettingKeys.Translation.Custom.AnthropicVersion))
+            .ReturnsAsync("2023-06-01");
+        SetupResponse(() => new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.NotFound,
+            Content = new StringContent("missing", Encoding.UTF8, "text/plain")
+        });
+
+        var result = await _service.GetModels();
+
+        Assert.NotNull(result.Message);
+        Assert.Contains("Failed to fetch models", result.Message);
+        Assert.Empty(result.Options);
     }
 
     [Fact]
@@ -576,6 +838,34 @@ public class CustomServiceTests
             }
         });
 
+    private static HttpResponseMessage MessagesResponse(string text, string stopReason = "end_turn") =>
+        JsonResponse(new
+        {
+            stop_reason = stopReason,
+            content = new[] { new { type = "text", text } }
+        });
+
+    private static HttpResponseMessage MessagesToolResponse(IEnumerable<(int Position, string Line)> lines) =>
+        JsonResponse(new
+        {
+            stop_reason = "tool_use",
+            content = new[]
+            {
+                new
+                {
+                    type = "tool_use",
+                    name = "record_translation_batch",
+                    input = new
+                    {
+                        translations = lines.Select(line => new { position = line.Position, line = line.Line }).ToArray()
+                    }
+                }
+            }
+        });
+
+    private static IEnumerable<string?> Roles(JsonElement messages) =>
+        messages.EnumerateArray().Select(message => message.GetProperty("role").GetString());
+
     private static HttpResponseMessage JsonResponse(object body) => new()
     {
         StatusCode = HttpStatusCode.OK,
@@ -589,7 +879,9 @@ public class CustomServiceTests
         string? aiMaxTokens = null,
         string? protocol = null,
         string chatTemplate = "",
-        string responsesTemplate = "")
+        string responsesTemplate = "",
+        string messagesTemplate = "",
+        string anthropicVersion = "2023-06-01")
     {
         var settings = new Dictionary<string, string>
         {
@@ -597,6 +889,8 @@ public class CustomServiceTests
             { SettingKeys.Translation.Custom.Endpoint, endpoint },
             { SettingKeys.Translation.Custom.ChatRequestTemplate, chatTemplate },
             { SettingKeys.Translation.Custom.ResponsesRequestTemplate, responsesTemplate },
+            { SettingKeys.Translation.Custom.MessagesRequestTemplate, messagesTemplate },
+            { SettingKeys.Translation.Custom.AnthropicVersion, anthropicVersion },
             { SettingKeys.Translation.AiPrompt, "Translate from {sourceLanguage} to {targetLanguage}" },
             { SettingKeys.Translation.AiUserPrompt, "{lineToTranslate}" },
             { SettingKeys.Translation.ProofreadPrompt, "Please proofread the line from {sourceLanguage} to {targetLanguage}" },
@@ -694,6 +988,42 @@ public class CustomServiceTests
             times,
             ItExpr.Is<HttpRequestMessage>(request => request.RequestUri!.ToString() == expectedUri),
             ItExpr.IsAny<CancellationToken>());
+    }
+
+    private void VerifyHeader(string name, string expected, Times times)
+    {
+        _httpMessageHandlerMock.Protected().Verify(
+            "SendAsync",
+            times,
+            ItExpr.Is<HttpRequestMessage>(request => HeaderEquals(request, name, expected)),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    private void VerifyHeaderAbsent(string name)
+    {
+        _httpMessageHandlerMock.Protected().Verify(
+            "SendAsync",
+            Times.Once(),
+            ItExpr.Is<HttpRequestMessage>(request => !request.Headers.Contains(name)),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    private static bool HeaderEquals(HttpRequestMessage request, string name, string expected)
+    {
+        if (!request.Headers.TryGetValues(name, out var values))
+        {
+            return false;
+        }
+
+        foreach (var value in values)
+        {
+            if (value == expected)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void VerifyAuthorization(string expectedHeader, Times times)

@@ -6,6 +6,7 @@ using Lingarr.Contracts.Translation;
 using Lingarr.Core.Configuration;
 using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Services.Translation.AnthropicMessages;
 using Lingarr.Server.Services.Translation.Base;
 using Lingarr.Server.Services.Translation.OpenAiCompatible;
 
@@ -13,10 +14,10 @@ namespace Lingarr.Server.Services.Translation;
 
 /// <summary>
 /// Independent custom provider: a user-supplied gateway spoken over a non-streaming protocol
-/// chosen in <c>custom_protocol</c> (OpenAI Chat Completions or OpenAI Responses). Keeps its own
-/// <c>custom_*</c> settings (endpoint, encrypted key, model, protocol, per-protocol request
-/// template) so it can be configured next to LocalAI without sharing identity, address or
-/// credentials.
+/// chosen in <c>custom_protocol</c> (OpenAI Chat Completions, OpenAI Responses, or Anthropic
+/// Messages). Keeps its own <c>custom_*</c> settings (endpoint, encrypted key, model, protocol,
+/// per-protocol request template) so it can be configured next to LocalAI and official Anthropic
+/// without sharing identity, address or credentials.
 /// </summary>
 public class CustomService : BaseLanguageService, ITranslationService, IBatchTranslationService, IProofreadService, IModelOverridable
 {
@@ -24,11 +25,12 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
     private readonly IRequestTemplateService _requestTemplateService;
     private readonly OpenAiChatCompletionsClient _chatClient;
     private readonly OpenAiResponsesClient _responsesClient;
-    private IOpenAiCompatibleCompletionClient _completionClient;
+    private readonly AnthropicMessagesClient _messagesClient;
     private CustomProtocol _protocol;
     private string? _model;
     private string? _endpoint;
     private string? _apiKey;
+    private string? _anthropicVersion;
     private string? _requestTemplate;
     private AiThinkingMode _aiThinking;
     private int _maxTokens;
@@ -67,9 +69,11 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             requestTemplateService,
             logger,
             "Custom");
-        // Replaced by the configured protocol in InitializeAsync; Chat Completions stays the
-        // historical default so records written before the protocol setting existed keep working.
-        _completionClient = _chatClient;
+        _messagesClient = new AnthropicMessagesClient(
+            httpClient,
+            requestTemplateService,
+            logger,
+            "Custom");
     }
 
     /// <summary>
@@ -90,6 +94,8 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
                 SettingKeys.Translation.Custom.Protocol,
                 SettingKeys.Translation.Custom.ChatRequestTemplate,
                 SettingKeys.Translation.Custom.ResponsesRequestTemplate,
+                SettingKeys.Translation.Custom.MessagesRequestTemplate,
+                SettingKeys.Translation.Custom.AnthropicVersion,
                 SettingKeys.Translation.AiPrompt,
                 SettingKeys.Translation.AiUserPrompt,
                 SettingKeys.Translation.AiMaxTokens,
@@ -112,12 +118,13 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
                     $"Custom protocol '{protocolSetting}' is not supported. Set {SettingKeys.Translation.Custom.Protocol} to {CustomProtocols.SupportedValues}.");
             }
 
-            _completionClient = _protocol == CustomProtocol.OpenAiResponses ? _responsesClient : _chatClient;
-
             // Each protocol reads its own template key, so editing one never changes the other.
-            var templateKey = _protocol == CustomProtocol.OpenAiResponses
-                ? SettingKeys.Translation.Custom.ResponsesRequestTemplate
-                : SettingKeys.Translation.Custom.ChatRequestTemplate;
+            var templateKey = _protocol switch
+            {
+                CustomProtocol.OpenAiResponses => SettingKeys.Translation.Custom.ResponsesRequestTemplate,
+                CustomProtocol.AnthropicMessages => SettingKeys.Translation.Custom.MessagesRequestTemplate,
+                CustomProtocol.OpenAiChat => SettingKeys.Translation.Custom.ChatRequestTemplate
+            };
 
             _model = ResolveModel(settings.GetValueOrDefault(SettingKeys.Translation.Custom.Model));
             var configuredEndpoint = settings.GetValueOrDefault(SettingKeys.Translation.Custom.Endpoint);
@@ -137,9 +144,12 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             // paths of the other protocol are still recognised as API paths and replaced.
             try
             {
-                _endpoint = _protocol == CustomProtocol.OpenAiResponses
-                    ? OpenAiCompatibleEndpoint.ResolveResponsesUrl(configuredEndpoint)
-                    : OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(configuredEndpoint);
+                _endpoint = _protocol switch
+                {
+                    CustomProtocol.OpenAiResponses => OpenAiCompatibleEndpoint.ResolveResponsesUrl(configuredEndpoint),
+                    CustomProtocol.AnthropicMessages => OpenAiCompatibleEndpoint.ResolveMessagesUrl(configuredEndpoint),
+                    CustomProtocol.OpenAiChat => OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(configuredEndpoint)
+                };
             }
             catch (Exception ex) when (ex is UriFormatException or ArgumentException)
             {
@@ -163,12 +173,26 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
                 : 5;
             _requestTimeout = TimeSpan.FromMinutes(requestTimeoutMinutes);
 
+            if (_protocol == CustomProtocol.AnthropicMessages)
+            {
+                var version = settings.GetValueOrDefault(SettingKeys.Translation.Custom.AnthropicVersion);
+                if (string.IsNullOrWhiteSpace(version))
+                {
+                    throw new TranslationConfigurationException(
+                        $"Custom Anthropic Messages requires {SettingKeys.Translation.Custom.AnthropicVersion} (sent as the anthropic-version header).");
+                }
+
+                _anthropicVersion = version.Trim();
+            }
+
             var apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.Custom.ApiKey);
             _apiKey = string.IsNullOrWhiteSpace(apiKey) ? null : apiKey.Trim();
             if (string.IsNullOrEmpty(_apiKey))
             {
                 _logger.LogWarning(
-                    "Custom API key is not configured. Authenticated OpenAI-compatible gateways will reject the request.");
+                    _protocol == CustomProtocol.AnthropicMessages
+                        ? "Custom API key is not configured. Anthropic Messages gateways that require x-api-key will reject the request."
+                        : "Custom API key is not configured. Authenticated OpenAI-compatible gateways will reject the request.");
             }
 
             _maxRetries = int.TryParse(settings.GetValueOrDefault(SettingKeys.Translation.MaxRetries),
@@ -213,14 +237,7 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             try
             {
                 using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await _completionClient.CompleteAsync(
-                    _endpoint!,
-                    _apiKey,
-                    _requestTemplate!,
-                    replacements,
-                    _aiThinking,
-                    _maxTokens,
-                    requestTimeout.Token);
+                return await CompleteOnceAsync(replacements, requestTimeout.Token);
             }
             catch (TranslationResponseException ex)
             {
@@ -273,14 +290,7 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
             try
             {
                 using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await _completionClient.CompleteAsync(
-                    _endpoint!,
-                    _apiKey,
-                    _requestTemplate!,
-                    replacements,
-                    _aiThinking,
-                    _maxTokens,
-                    requestTimeout.Token);
+                return await CompleteOnceAsync(replacements, requestTimeout.Token);
             }
             catch (TranslationResponseException ex)
             {
@@ -382,20 +392,76 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
         throw new TranslationException("Batch translation failed after maximum retry attempts.");
     }
 
-    private async Task<Dictionary<int, string>> TranslateBatchWithCustomApi(
+    private Task<Dictionary<int, string>> TranslateBatchWithCustomApi(
         List<BatchSubtitleItem> subtitleBatch,
         CancellationToken cancellationToken)
     {
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
-        return await _completionClient.CompleteBatchAsync(
-            _endpoint!,
-            _apiKey,
-            _requestTemplate!,
-            replacements,
-            _aiThinking,
-            _maxTokens,
-            cancellationToken);
+        return _protocol switch
+        {
+            CustomProtocol.AnthropicMessages => _messagesClient.CompleteBatchAsync(
+                _endpoint!,
+                _apiKey,
+                _anthropicVersion!,
+                _requestTemplate!,
+                replacements,
+                _maxTokens,
+                strict: true,
+                cancellationToken),
+            CustomProtocol.OpenAiResponses => _responsesClient.CompleteBatchAsync(
+                _endpoint!,
+                _apiKey,
+                _requestTemplate!,
+                replacements,
+                _aiThinking,
+                _maxTokens,
+                cancellationToken),
+            CustomProtocol.OpenAiChat => _chatClient.CompleteBatchAsync(
+                _endpoint!,
+                _apiKey,
+                _requestTemplate!,
+                replacements,
+                _aiThinking,
+                _maxTokens,
+                cancellationToken)
+        };
     }
+
+    /// <summary>
+    /// One completion on the configured protocol. Messages does not receive <c>ai_thinking</c>:
+    /// that setting writes the Chat Completions extension, which a Messages gateway would reject.
+    /// </summary>
+    private Task<string> CompleteOnceAsync(
+        Dictionary<string, string> replacements,
+        CancellationToken cancellationToken) =>
+        _protocol switch
+        {
+            CustomProtocol.AnthropicMessages => _messagesClient.CompleteAsync(
+                _endpoint!,
+                _apiKey,
+                _anthropicVersion!,
+                _requestTemplate!,
+                replacements,
+                _maxTokens,
+                strict: true,
+                cancellationToken),
+            CustomProtocol.OpenAiResponses => _responsesClient.CompleteAsync(
+                _endpoint!,
+                _apiKey,
+                _requestTemplate!,
+                replacements,
+                _aiThinking,
+                _maxTokens,
+                cancellationToken),
+            CustomProtocol.OpenAiChat => _chatClient.CompleteAsync(
+                _endpoint!,
+                _apiKey,
+                _requestTemplate!,
+                replacements,
+                _aiThinking,
+                _maxTokens,
+                cancellationToken)
+        };
 
     /// <summary>
     /// Per-request cancellation token: the caller's token combined with the configured request
@@ -422,6 +488,21 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
         }
 
         var apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.Custom.ApiKey);
+        var protocolSetting = await _settings.GetSetting(SettingKeys.Translation.Custom.Protocol);
+        if (!CustomProtocols.TryParse(protocolSetting, out var protocol))
+        {
+            return new ModelsResponse
+            {
+                Message = $"Custom protocol '{protocolSetting}' is not supported. Set {SettingKeys.Translation.Custom.Protocol} to {CustomProtocols.SupportedValues}."
+            };
+        }
+
+        if (protocol == CustomProtocol.AnthropicMessages)
+        {
+            var version = await _settings.GetSetting(SettingKeys.Translation.Custom.AnthropicVersion);
+            return await AnthropicMessagesModelCatalog.FetchAsync(_httpClient, endpoint, apiKey, version);
+        }
+
         return await OpenAiCompatibleModelCatalog.FetchAsync(_httpClient, endpoint, apiKey);
     }
 }

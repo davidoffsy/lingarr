@@ -9,7 +9,8 @@ export const LOCAL_AI_PROTOCOLS = {
 
 export const CUSTOM_PROTOCOLS = {
     OPENAI_CHAT: 'openai_chat',
-    OPENAI_RESPONSES: 'openai_responses'
+    OPENAI_RESPONSES: 'openai_responses',
+    ANTHROPIC_MESSAGES: 'anthropic_messages'
 } as const
 
 export const AI_THINKING_MODES = {
@@ -41,6 +42,7 @@ export const SETTINGS = {
     CUSTOM_ENDPOINT: 'custom_endpoint',
     CUSTOM_MODEL: 'custom_model',
     CUSTOM_PROTOCOL: 'custom_protocol',
+    CUSTOM_ANTHROPIC_VERSION: 'custom_anthropic_version',
     GEMINI_MODEL: 'gemini_model',
     DEEPSEEK_MODEL: 'deepseek_model',
     MISTRAL_MODEL: 'mistral_model',
@@ -91,6 +93,7 @@ export const SETTINGS = {
     LOCAL_AI_GENERATE_REQUEST_TEMPLATE: 'local_ai_generate_request_template',
     CUSTOM_CHAT_REQUEST_TEMPLATE: 'custom_chat_request_template',
     CUSTOM_RESPONSES_REQUEST_TEMPLATE: 'custom_responses_request_template',
+    CUSTOM_MESSAGES_REQUEST_TEMPLATE: 'custom_messages_request_template',
     DEEPSEEK_REQUEST_TEMPLATE: 'deepseek_request_template',
     GEMINI_REQUEST_TEMPLATE: 'gemini_request_template',
     MISTRAL_REQUEST_TEMPLATE: 'mistral_request_template',
@@ -131,6 +134,7 @@ export interface ISettings {
     custom_endpoint: string
     custom_model: string
     custom_protocol: string
+    custom_anthropic_version: string
     gemini_model: string
     deepseek_model: string
     mistral_model: string
@@ -181,6 +185,7 @@ export interface ISettings {
     local_ai_generate_request_template: string
     custom_chat_request_template: string
     custom_responses_request_template: string
+    custom_messages_request_template: string
     deepseek_request_template: string
     gemini_request_template: string
     mistral_request_template: string

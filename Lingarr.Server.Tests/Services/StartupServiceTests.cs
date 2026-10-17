@@ -50,6 +50,8 @@ public class StartupServiceTests : IDisposable
         ("CUSTOM_PROTOCOL", SettingKeys.Translation.Custom.Protocol),
         ("CUSTOM_CHAT_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.ChatRequestTemplate),
         ("CUSTOM_RESPONSES_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.ResponsesRequestTemplate),
+        ("CUSTOM_MESSAGES_REQUEST_TEMPLATE", SettingKeys.Translation.Custom.MessagesRequestTemplate),
+        ("CUSTOM_ANTHROPIC_VERSION", SettingKeys.Translation.Custom.AnthropicVersion),
         ("GEMINI_MODEL", SettingKeys.Translation.Gemini.Model),
         ("GEMINI_API_KEY", SettingKeys.Translation.Gemini.ApiKey),
         ("DEEPSEEK_MODEL", SettingKeys.Translation.DeepSeek.Model),
@@ -74,6 +76,9 @@ public class StartupServiceTests : IDisposable
 
     private const string CustomResponsesRequestTemplate =
         "{\"model\":\"{model}\",\"input\":[{\"role\":\"user\",\"content\":\"{lineToTranslate}\"}]}";
+
+    private const string CustomMessagesRequestTemplate =
+        "{\"model\":\"{model}\",\"max_tokens\":8192,\"system\":\"{systemPrompt}\",\"messages\":[{\"role\":\"user\",\"content\":\"{userMessage}\"}]}";
 
     private readonly string _tempDir;
 
@@ -351,6 +356,8 @@ public class StartupServiceTests : IDisposable
         Environment.SetEnvironmentVariable("CUSTOM_PROTOCOL", "openai_responses");
         Environment.SetEnvironmentVariable("CUSTOM_CHAT_REQUEST_TEMPLATE", CustomRequestTemplate);
         Environment.SetEnvironmentVariable("CUSTOM_RESPONSES_REQUEST_TEMPLATE", CustomResponsesRequestTemplate);
+        Environment.SetEnvironmentVariable("CUSTOM_MESSAGES_REQUEST_TEMPLATE", CustomMessagesRequestTemplate);
+        Environment.SetEnvironmentVariable("CUSTOM_ANTHROPIC_VERSION", "2023-06-01");
 
         var serviceProvider = BuildProvider();
         var startupService = new StartupService(serviceProvider, NullLogger<StartupService>.Instance);
@@ -373,6 +380,12 @@ public class StartupServiceTests : IDisposable
         Assert.Equal(
             CustomResponsesRequestTemplate,
             await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.ResponsesRequestTemplate));
+        Assert.Equal(
+            CustomMessagesRequestTemplate,
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.MessagesRequestTemplate));
+        Assert.Equal(
+            "2023-06-01",
+            await GetSettingValue(serviceProvider, SettingKeys.Translation.Custom.AnthropicVersion));
 
         foreach (var localAiKey in EnvMap
                      .Where(entry => entry.SettingKey.StartsWith("local_ai", StringComparison.Ordinal))

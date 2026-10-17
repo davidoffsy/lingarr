@@ -144,7 +144,7 @@ const templateMap: Record<string, keyof ISettings> = {
 const customProtocol = computed(() => {
     const value = settingsStore.getSetting(SETTINGS.CUSTOM_PROTOCOL)
     // The server accepts any case and surrounding whitespace. Compare the same way, otherwise
-    // CUSTOM_PROTOCOL=OPENAI_RESPONSES translates with Responses while this editor saves the chat template.
+    // CUSTOM_PROTOCOL=ANTHROPIC_MESSAGES translates with Messages while this editor saves the chat template.
     return typeof value === 'string' && value.trim()
         ? value.trim().toLowerCase()
         : CUSTOM_PROTOCOLS.OPENAI_CHAT
@@ -175,9 +175,13 @@ const activeTemplateKey = computed((): keyof ISettings | '' => {
     }
     if (serviceType.value === SERVICE_TYPE.CUSTOM) {
         // Every protocol keeps its own template, so switching never overwrites the other one's edits.
-        return customProtocol.value === CUSTOM_PROTOCOLS.OPENAI_RESPONSES
-            ? SETTINGS.CUSTOM_RESPONSES_REQUEST_TEMPLATE
-            : SETTINGS.CUSTOM_CHAT_REQUEST_TEMPLATE
+        if (customProtocol.value === CUSTOM_PROTOCOLS.OPENAI_RESPONSES) {
+            return SETTINGS.CUSTOM_RESPONSES_REQUEST_TEMPLATE
+        }
+        if (customProtocol.value === CUSTOM_PROTOCOLS.ANTHROPIC_MESSAGES) {
+            return SETTINGS.CUSTOM_MESSAGES_REQUEST_TEMPLATE
+        }
+        return SETTINGS.CUSTOM_CHAT_REQUEST_TEMPLATE
     }
     return templateMap[serviceType.value] || ''
 })
@@ -241,6 +245,7 @@ const presetLabelMap: Record<string, string> = {
     local_ai_chat_request_template: 'LocalAI Chat',
     custom_chat_request_template: 'Custom Chat',
     custom_responses_request_template: 'Custom Responses',
+    custom_messages_request_template: 'Custom Messages',
     deepseek_request_template: 'DeepSeek Chat',
     mistral_request_template: 'Mistral Chat',
     xai_request_template: 'xAI Chat'
@@ -287,7 +292,7 @@ watch(activeTemplateKey, () => {
     syncJsonText()
 })
 
-watch(serviceType, () => {
+watch([serviceType, customProtocol], () => {
     selectedPreset.value = ''
 })
 </script>

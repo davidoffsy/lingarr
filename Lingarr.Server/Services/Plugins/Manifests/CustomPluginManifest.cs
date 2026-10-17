@@ -7,8 +7,9 @@ namespace Lingarr.Server.Services.Plugins.Manifests;
 
 /// <summary>
 /// Independent custom provider for self-hosted or third-party OpenAI-compatible gateways.
-/// Speaks one explicitly configured non-streaming protocol (Chat Completions or Responses) and
-/// keeps its own <c>custom_*</c> settings, so it never shares an address, key or model with LocalAI.
+/// Speaks one explicitly configured non-streaming protocol (Chat Completions, Responses, or
+/// Anthropic Messages) and keeps its own <c>custom_*</c> settings, so it never shares an address,
+/// key or model with LocalAI or the official Anthropic provider.
 /// </summary>
 public sealed class CustomPluginManifest : IPluginManifest
 {
@@ -17,7 +18,7 @@ public sealed class CustomPluginManifest : IPluginManifest
     public string DisplayName => "Custom";
 
     public string? Description =>
-        "Your own OpenAI-compatible gateway. Choose the protocol (<code>openai_chat</code> for Chat Completions or <code>openai_responses</code> for Responses), enter the base URL (for example <code>http://localhost:8000/v1</code> or a full <code>/v1/chat/completions</code> / <code>/v1/responses</code> path), an optional key, and the model to use. Independent from LocalAI: both can be configured and used in the same translation chain. Use <strong>Test connection</strong> to load the model list; type a model id when the gateway has no <code>/models</code> endpoint.";
+        "Your own gateway. Choose the protocol (<code>openai_chat</code>, <code>openai_responses</code>, or <code>anthropic_messages</code>), enter the base URL (for example <code>http://localhost:8000/v1</code> or a full protocol path), an optional key, and the model to use. Independent from LocalAI and official Anthropic. Use <strong>Test connection</strong> to load the model list; type a model id when the gateway has no <code>/models</code> endpoint.";
 
     public bool HasRequestTemplate => true;
 
@@ -56,8 +57,22 @@ public sealed class CustomPluginManifest : IPluginManifest
                 {
                     Label = "OpenAI Responses",
                     Value = SettingKeys.Translation.Custom.Protocols.OpenAiResponses
+                },
+                new LabelValue
+                {
+                    Label = "Anthropic Messages",
+                    Value = SettingKeys.Translation.Custom.Protocols.AnthropicMessages
                 }
             ]
+        },
+        new()
+        {
+            Key = SettingKeys.Translation.Custom.AnthropicVersion,
+            Label = "Anthropic version",
+            Type = PluginSettingType.Text,
+            Required = false,
+            Default = "2023-06-01",
+            Description = "Sent as the anthropic-version header when the protocol is Anthropic Messages. Ignored by the OpenAI protocols."
         },
         new()
         {
@@ -65,7 +80,7 @@ public sealed class CustomPluginManifest : IPluginManifest
             Label = "API key (optional)",
             Type = PluginSettingType.Secret,
             Required = false,
-            Description = "Bearer token if the gateway requires authentication. Stored encrypted."
+            Description = "Bearer token for OpenAI Chat and Responses, or the x-api-key value for Anthropic Messages. Stored encrypted."
         },
         new()
         {

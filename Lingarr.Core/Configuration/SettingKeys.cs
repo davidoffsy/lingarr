@@ -63,8 +63,9 @@ public static class SettingKeys
         }
 
         /// <summary>
-        /// Independent custom OpenAI-compatible provider. Shares no keys with
-        /// <see cref="LocalAi"/> so both entries can be configured side by side.
+        /// Independent custom provider (OpenAI Chat, OpenAI Responses, or Anthropic Messages).
+        /// Shares no keys with <see cref="LocalAi"/> or official Anthropic, so those providers
+        /// can be configured and used in the same translation chain.
         /// </summary>
         public static class Custom
         {
@@ -74,6 +75,8 @@ public static class SettingKeys
             public const string Protocol = "custom_protocol";
             public const string ChatRequestTemplate = "custom_chat_request_template";
             public const string ResponsesRequestTemplate = "custom_responses_request_template";
+            public const string MessagesRequestTemplate = "custom_messages_request_template";
+            public const string AnthropicVersion = "custom_anthropic_version";
 
             /// <summary>
             /// Protocols Custom can speak. Every protocol is non-streaming and keeps its own request
@@ -83,6 +86,7 @@ public static class SettingKeys
             {
                 public const string OpenAiChat = "openai_chat";
                 public const string OpenAiResponses = "openai_responses";
+                public const string AnthropicMessages = "anthropic_messages";
             }
         }
 

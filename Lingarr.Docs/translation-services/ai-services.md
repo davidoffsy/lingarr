@@ -108,8 +108,8 @@ These two settings apply to every AI service and are configured once under **Set
 
 | **Environment Variable** | **Description** |
 |--------------------------|-----------------|
-| `AI_MAX_TOKENS` | Maximum tokens for one completion (thinking plus the answer). Default `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI and other chat providers receive `max_tokens`; Custom over Responses receives `max_output_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic's template default is `8192` when the field is omitted. LocalAI generate (Ollama `/api/generate`) is not injected. |
-| `AI_THINKING` | Chain-of-thought control. Default `auto`. Applied only to OpenAI-compatible chat, which is LocalAI chat and Custom over `openai_chat`. `auto` sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. |
+| `AI_MAX_TOKENS` | Maximum tokens for one completion (thinking plus the answer). Default `0` omits the field so the provider or request-template default is kept. OpenAI receives `max_completion_tokens`; LocalAI, other chat providers, official Anthropic and Custom over Messages receive `max_tokens`; Custom over Responses receives `max_output_tokens`; Gemini receives `generationConfig.maxOutputTokens`. Anthropic and Custom Messages keep the template default of `8192` when the field is omitted; Custom Messages still requires a positive `max_tokens`. LocalAI generate (Ollama `/api/generate`) is not injected. |
+| `AI_THINKING` | Chain-of-thought control. Default `auto`. Applied only to OpenAI-compatible chat, which is LocalAI chat and Custom over `openai_chat`. `auto` sends no `thinking` field. `off` writes `thinking.disabled` (needed for OpenCode Go / MiMo). `on` writes `thinking.enabled`. Responses and Anthropic Messages are left untouched. |
 
 ## Environment variables
 ### OpenAI
@@ -182,16 +182,18 @@ LocalAI works with Ollama or any other OpenAI-compatible model or router.
 
 ### Custom
 
-Custom talks to your own gateway over one explicitly selected, non-streaming protocol: **OpenAI Chat Completions** (`openai_chat`, the default) or **OpenAI Responses** (`openai_responses`). It is a separate provider, not a mode of LocalAI: address, key, model, protocol and per-protocol request template live under their own `custom_*` settings, so both providers can be configured and used in the same translation chain without sharing any of them. Existing `localai` configurations keep working unchanged — nothing is migrated automatically — while new OpenAI-compatible gateways belong on Custom.
+Custom talks to your own gateway over one explicitly selected, non-streaming protocol: **OpenAI Chat Completions** (`openai_chat`, the default), **OpenAI Responses** (`openai_responses`), or **Anthropic Messages** (`anthropic_messages`). It is a separate provider, not a mode of LocalAI or official Anthropic: address, key, model, protocol and per-protocol request template live under their own `custom_*` settings, so these providers can be configured and used in the same translation chain without sharing any of them. Existing `localai` and official Anthropic configurations keep working unchanged — nothing is migrated automatically.
 
 | **Environment Variable** | **Description**                                                                                                           |
 |--------------------------|---------------------------------------------------------------------------------------------------------------------------|
-| `CUSTOM_PROTOCOL` | `openai_chat` or `openai_responses`. Default `openai_chat`. Switching keeps the same address, key and model, but the gateway has to serve the selected protocol and every protocol keeps its own request template. |
-| `CUSTOM_ENDPOINT` | Base URL or a full endpoint path of the selected protocol. Example: `http://localhost:8000/v1` or `https://gateway.example.com/v1/responses`. |
+| `CUSTOM_PROTOCOL` | `openai_chat`, `openai_responses`, or `anthropic_messages`. Default `openai_chat`. Switching keeps the same address, key and model, but the gateway has to serve the selected protocol and every protocol keeps its own request template. |
+| `CUSTOM_ENDPOINT` | Base URL or a full endpoint path of the selected protocol. Example: `http://localhost:8000/v1`, `https://gateway.example.com/v1/responses`, or `https://gateway.example.com/v1/messages`. |
 | `CUSTOM_MODEL` | The model to use. Load the gateway's model list with **Test connection**, or type a model id.                               |
-| `CUSTOM_API_KEY` | Bearer token, optional. Only needed when the gateway requires authentication. Stored encrypted.                            |
+| `CUSTOM_API_KEY` | Optional. Sent as `Authorization: Bearer` for the OpenAI protocols and as `x-api-key` for Anthropic Messages. Stored encrypted. |
+| `CUSTOM_ANTHROPIC_VERSION` | Value of the `anthropic-version` header when the protocol is `anthropic_messages`. Default `2023-06-01`. Ignored by the OpenAI protocols. |
 | `CUSTOM_CHAT_REQUEST_TEMPLATE` | Request template used by the `openai_chat` protocol, stored separately from the LocalAI and OpenAI templates.              |
-| `CUSTOM_RESPONSES_REQUEST_TEMPLATE` | Request template used by the `openai_responses` protocol, stored independently from the chat template, so switching protocols never overwrites the other one's edits. |
+| `CUSTOM_RESPONSES_REQUEST_TEMPLATE` | Request template used by the `openai_responses` protocol, stored independently from the other templates. |
+| `CUSTOM_MESSAGES_REQUEST_TEMPLATE` | Request template used by `anthropic_messages` (`model`, `max_tokens`, top-level `system`, and `messages`), stored independently so switching protocols never overwrites another protocol's edits. |
 | `AI_PROMPT` | The system prompt template.                                                                                               |
 | `AI_USER_PROMPT` | The user message template.                                                                                                |
 
@@ -201,20 +203,22 @@ As everywhere else, each variable also accepts the `_FILE` variant, see [Configu
 
 - `openai_chat` posts to the chat completions endpoint and parses `choices[0].message.content`, with structured output requested through `response_format` for batch jobs.
 - `openai_responses` posts the same prompts as `input` messages to the responses endpoint and reads `output[].content[].text`; batch jobs request structured output through `text.format`. A response only counts as success when it completed with text — refusals, `incomplete`/`failed` responses, non-final states and empty output fail the candidate instead of being written back as a translation.
+- `anthropic_messages` posts to the Messages endpoint. The system prompt is a top-level `system` field, not a chat `system` role, and `max_tokens` is required. The reply is read from `content[]` text blocks; thinking blocks are ignored. Batch jobs ask for a `tool_use` block named `record_translation_batch` and, when the gateway does not return one, fall back to a JSON array in the text. A refusal (`stop_reason: refusal`), a truncation (`stop_reason: max_tokens`), and an empty body fail the candidate. Official Anthropic is unchanged and still accepts partial text.
 
 **Addresses.** Custom looks at what you enter and resolves the URL of the selected protocol from it:
 
 - a base URL such as `http://localhost:8000` becomes `http://localhost:8000/v1/chat/completions`;
 - a URL that already ends in `/v1`, such as `http://localhost:8000/v1`, becomes the same `.../v1/chat/completions`;
 - a full path such as `https://gateway.example.com/v1/chat/completions` is used as it is;
-- with `openai_responses` the same rules apply with `/v1/responses` (or `/responses` on a URL that already ends in `/v1`) as the target path.
+- with `openai_responses` the same rules apply with `/v1/responses` (or `/responses` on a URL that already ends in `/v1`) as the target path;
+- with `anthropic_messages` the target path is `/v1/messages` (or `/messages` on a URL that already ends in `/v1`).
 
-Other known API paths (`/chat/completions`, `/responses`, `/completions`, `/models`, and Ollama's `/api/generate` and `/api/tags`) are recognised and replaced by the selected protocol's path, so a URL copied from another client does not have to be trimmed by hand. Custom never streams: every request is a non-streaming call. A request template that sets `"stream": true` is rejected with a configuration error before it is sent, and a gateway that answers with an event stream (`text/event-stream` or a `data:` body) is reported as unsupported instead of being parsed as a partial or empty translation.
+Other known API paths (`/chat/completions`, `/responses`, `/messages`, `/completions`, `/models`, and Ollama's `/api/generate` and `/api/tags`) are recognised and replaced by the selected protocol's path, so a URL copied from another client does not have to be trimmed by hand. Custom never streams: every request is a non-streaming call. A request template that sets `"stream": true` is rejected with a configuration error before it is sent, and a gateway that answers with an event stream (`text/event-stream` or a `data:` body) is reported as unsupported instead of being parsed as a partial or empty translation.
 
-**Authentication.** `CUSTOM_API_KEY` is optional. When it is set, the request carries `Authorization: Bearer <key>`; when it is empty, the request is sent without one and Lingarr warns that gateways requiring authentication will reject it.
+**Authentication.** `CUSTOM_API_KEY` is optional. OpenAI Chat and Responses send it as `Authorization: Bearer <key>`. Anthropic Messages sends it as `x-api-key` together with `anthropic-version` from `CUSTOM_ANTHROPIC_VERSION` (default `2023-06-01`). When the key is empty, the request is sent without one and Lingarr warns that gateways requiring authentication will reject it. A blank version is a configuration error for Messages and is not guessed.
 
-**Models.** **Test connection** requests the model catalogue at the `/v1/models` path of the same address, with the same bearer token, and offers the result in the model dropdown. Gateways without a `/models` endpoint are supported: the model field accepts a typed id, and a failed model list does not mean the gateway cannot translate.
+**Models.** **Test connection** requests the model catalogue at the `/v1/models` path of the same address. OpenAI protocols send the bearer token; Anthropic Messages sends `x-api-key` and `anthropic-version`. Gateways without a `/models` endpoint are supported: the model field accepts a typed id, and a failed model list does not mean the gateway cannot translate.
 
-**Request template.** Each protocol has its own default body, stored independently from the other protocol and from `local_ai_chat_request_template` and `openai_request_template`: `custom_chat_request_template` for `openai_chat` (`model` + `messages`) and `custom_responses_request_template` for `openai_responses` (`model` + `input`). **Settings > Services > Request Settings** follows `custom_protocol`, so the editor always shows the template that is actually in use.
+**Request template.** Each protocol has its own default body, stored independently from the others and from `local_ai_chat_request_template`, `openai_request_template` and `anthropic_request_template`: `custom_chat_request_template` for `openai_chat` (`model` + `messages`), `custom_responses_request_template` for `openai_responses` (`model` + `input`), and `custom_messages_request_template` for `anthropic_messages` (`model`, `max_tokens`, `system`, `messages`). **Settings > Services > Request Settings** follows `custom_protocol`, so the editor always shows the template that is actually in use.
 
 **Translation chain.** A chain entry is one provider plus an optional model, so `custom` can appear more than once with a different model on every line. When a gateway answers `401`, Lingarr treats the credentials as wrong for that gateway and skips its remaining models before trying the next provider in the chain; a missing model, a rate limit or a timeout moves on after the normal retries. When the lines of one subtitle end up translated by more than one model, the translator info and the per-line view report the mixed sources.

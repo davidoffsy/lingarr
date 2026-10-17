@@ -64,7 +64,7 @@ public class MigrationTests
             foreach (var key in new[]
                      {
                          "custom_endpoint", "custom_model", "custom_api_key", "custom_chat_request_template",
-                         "custom_responses_request_template"
+                         "custom_responses_request_template", "custom_messages_request_template"
                      })
             {
                 command.CommandText = $"SELECT value FROM settings WHERE key = '{key}'";
@@ -74,6 +74,8 @@ public class MigrationTests
             // The protocol keeps an explicit default so existing installations stay on Chat Completions.
             command.CommandText = "SELECT value FROM settings WHERE key = 'custom_protocol'";
             Assert.Equal("openai_chat", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            command.CommandText = "SELECT value FROM settings WHERE key = 'custom_anthropic_version'";
+            Assert.Equal("2023-06-01", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
         }
         finally
         {
@@ -108,6 +110,8 @@ public class MigrationTests
             Assert.Equal(0L, await CountSettingsAsync(connection, "custom_endpoint"));
             Assert.Equal(0L, await CountSettingsAsync(connection, "custom_protocol"));
             Assert.Equal(0L, await CountSettingsAsync(connection, "custom_responses_request_template"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_messages_request_template"));
+            Assert.Equal(0L, await CountSettingsAsync(connection, "custom_anthropic_version"));
         }
         finally
         {
@@ -158,11 +162,14 @@ public class MigrationTests
             Assert.Equal("openai_responses",
                 await valueCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
             Assert.Equal(1L, await CountSettingsAsync(connection, "custom_protocol"));
+            valueCommand.CommandText = "SELECT value FROM settings WHERE key = 'custom_anthropic_version'";
+            Assert.Equal("2023-06-01",
+                await valueCommand.ExecuteScalarAsync(TestContext.Current.CancellationToken));
 
             foreach (var key in new[]
                      {
                          "custom_model", "custom_api_key", "custom_chat_request_template",
-                         "custom_responses_request_template"
+                         "custom_responses_request_template", "custom_messages_request_template"
                      })
             {
                 await using var command = connection.CreateCommand();

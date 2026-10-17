@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Models;
@@ -7,7 +6,7 @@ using Lingarr.Contracts.Translation;
 using Lingarr.Core.Configuration;
 using Lingarr.Server.Exceptions;
 using Lingarr.Server.Interfaces.Services;
-using Lingarr.Server.Services.Translation.Batch;
+using Lingarr.Server.Services.Translation.AnthropicMessages;
 using Lingarr.Server.Services.Translation.Base;
 
 namespace Lingarr.Server.Services.Translation;
@@ -17,6 +16,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     private readonly string? _endpoint = "https://api.anthropic.com/v1";
     private readonly HttpClient _httpClient;
     private readonly IRequestTemplateService _requestTemplateService;
+    private readonly AnthropicMessagesClient _messagesClient;
     private string? _model;
     private string? _apiKey;
     private string? _version;
@@ -24,6 +24,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     private int _maxTokens;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
+    private TimeSpan _requestTimeout;
 
     /// <inheritdoc />
     public override string? ModelName => _model;
@@ -45,6 +46,9 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     {
         _httpClient = httpClient;
         _requestTemplateService = requestTemplateService;
+        // Official Anthropic stays on the lenient parser (strict: false). Headers and timeout are
+        // applied per request, so this shared HttpClient is not mutated.
+        _messagesClient = new AnthropicMessagesClient(httpClient, requestTemplateService, logger, "Anthropic");
     }
 
     /// <summary>
@@ -102,10 +106,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                 out var timeOut)
                 ? timeOut
                 : 5;
-            _httpClient.Timeout = TimeSpan.FromMinutes(requestTimeout);
-            _httpClient.DefaultRequestHeaders.Add("x-api-key", _apiKey);
-            _httpClient.DefaultRequestHeaders.Add("anthropic-version",
-                settings[SettingKeys.Translation.Anthropic.Version]);
+            _requestTimeout = TimeSpan.FromMinutes(requestTimeout);
 
             _maxRetries = int.TryParse(settings[SettingKeys.Translation.MaxRetries], out var maxRetries) 
                 ? maxRetries 
@@ -137,16 +138,14 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     {
         await InitializeAsync(sourceLanguage, targetLanguage);
 
-        using var retry = new CancellationTokenSource();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retry.Token);
-        
         var delay = _retryDelay;
         for (var attempt = 1; attempt <= _maxRetries; attempt++)
         {
             try
             {
                 var replacements = GetReplacements(_model!, text, contextLinesBefore, contextLinesAfter);
-                return await CompleteWithAnthropicApi(replacements, linked.Token);
+                using var requestTimeout = CreateRequestTimeout(cancellationToken);
+                return await CompleteWithAnthropicApi(replacements, requestTimeout.Token);
             }
             catch (TranslationResponseException ex)
             {
@@ -156,7 +155,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                     throw new TranslationException($"Retry limit reached after {ex.StatusCode}.", ex);
                 }
 
-                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
@@ -193,16 +192,14 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     {
         await InitializeAsync(sourceLanguage, targetLanguage);
 
-        using var retry = new CancellationTokenSource();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retry.Token);
-
         var delay = _retryDelay;
         for (var attempt = 1; attempt <= _maxRetries; attempt++)
         {
             try
             {
                 var replacements = GetProofreadReplacements(_model!, sourceText, translatedText);
-                return await CompleteWithAnthropicApi(replacements, linked.Token);
+                using var requestTimeout = CreateRequestTimeout(cancellationToken);
+                return await CompleteWithAnthropicApi(replacements, requestTimeout.Token);
             }
             catch (TranslationResponseException ex)
             {
@@ -212,7 +209,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                     throw new TranslationException($"Retry limit reached after {ex.StatusCode}.", ex);
                 }
 
-                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
@@ -239,67 +236,18 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
         throw new TranslationException("Proofread failed after maximum retry attempts.");
     }
 
-    private async Task<string> CompleteWithAnthropicApi(
+    private Task<string> CompleteWithAnthropicApi(
         Dictionary<string, string> replacements,
-        CancellationToken cancellationToken)
-    {
-        var bodyJson = _requestTemplateService.BuildRequestBody(_requestTemplate!, replacements);
-        bodyJson = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
-        var content = new StringContent(
-            bodyJson,
-            Encoding.UTF8,
-            "application/json"
-        );
-
-        var response = await _httpClient.PostAsync($"{_endpoint}/messages", content, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "Anthropic API request failed with status {StatusCode}: {ResponseContent}",
-                response.StatusCode,
-                responseContent);
-            throw HttpFailure.FromResponse(
-                "Anthropic",
-                response,
-                $"Anthropic API request failed with status {response.StatusCode}: {responseContent}");
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        var jsonResponse = JsonSerializer.Deserialize<JsonElement>(responseBody);
-
-        var stopReason = jsonResponse.TryGetProperty("stop_reason", out var stopReasonProperty)
-            ? stopReasonProperty.GetString()
-            : null;
-
-        if (!jsonResponse.TryGetProperty("content", out var contentArray) ||
-            contentArray.GetArrayLength() == 0)
-        {
-            throw new TranslationException(
-                $"Anthropic returned no content (stop_reason: {stopReason ?? "unknown"}).");
-        }
-
-        JsonElement? textContent = null;
-        foreach (var contentItem in contentArray.EnumerateArray())
-        {
-            if (!contentItem.TryGetProperty("type", out var typeProperty) ||
-                typeProperty.GetString() != "text")
-            {
-                continue;
-            }
-            textContent = contentItem;
-            break;
-        }
-
-        if (!textContent.HasValue ||
-            !textContent.Value.TryGetProperty("text", out var textProperty))
-        {
-            throw new TranslationException(
-                $"Anthropic response contained no text block (stop_reason: {stopReason ?? "unknown"}).");
-        }
-
-        return textProperty.GetString() ?? throw new InvalidOperationException();
-    }
+        CancellationToken cancellationToken) =>
+        _messagesClient.CompleteAsync(
+            $"{_endpoint}/messages",
+            _apiKey,
+            _version!,
+            _requestTemplate!,
+            replacements,
+            _maxTokens,
+            strict: false,
+            cancellationToken);
 
     /// <summary>
     /// Translates a batch of subtitles in a single API call using Anthropic's structured output
@@ -317,15 +265,13 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     {
         await InitializeAsync(sourceLanguage, targetLanguage);
 
-        using var retry = new CancellationTokenSource();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, retry.Token);
-        
         var delay = _retryDelay;
         for (var attempt = 1; attempt <= _maxRetries; attempt++)
         {
             try
             {
-                return await TranslateBatchWithAnthropicApi(subtitleBatch, linked.Token);
+                using var requestTimeout = CreateRequestTimeout(cancellationToken);
+                return await TranslateBatchWithAnthropicApi(subtitleBatch, requestTimeout.Token);
             }
             catch (TranslationResponseException ex)
             {
@@ -335,7 +281,7 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                     throw new TranslationException($"Retry limit reached after {ex.StatusCode}.", ex);
                 }
 
-                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
@@ -362,131 +308,32 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
         throw new TranslationException("Batch translation failed after maximum retry attempts.");
     }
 
-    private async Task<Dictionary<int, string>> TranslateBatchWithAnthropicApi(
+    private Task<Dictionary<int, string>> TranslateBatchWithAnthropicApi(
         List<BatchSubtitleItem> subtitleBatch,
         CancellationToken cancellationToken)
     {
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
-        var bodyJson = _requestTemplateService.BuildRequestBody(_requestTemplate!, replacements);
-        bodyJson = AiMaxTokens.ApplyChat(_requestTemplateService, bodyJson, _maxTokens);
-        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
-        {
-            ["tools"] = new[]
-            {
-                new
-                {
-                    name = "record_translation_batch",
-                    description = "Record batch translation results using well-structured JSON.",
-                    input_schema = new
-                    {
-                        type = "object",
-                        properties = new Dictionary<string, object>
-                        {
-                            ["translations"] = new
-                            {
-                                type = "array",
-                                items = new
-                                {
-                                    type = "object",
-                                    properties = new Dictionary<string, object>
-                                    {
-                                        ["position"] = new
-                                        {
-                                            type = "integer",
-                                            description = "Position/index of the subtitle item"
-                                        },
-                                        ["line"] = new
-                                        {
-                                            type = "string",
-                                            description = "Translated subtitle text"
-                                        }
-                                    },
-                                    required = new[] { "position", "line" }
-                                },
-                                description = "Array of translated subtitle items with their positions"
-                            }
-                        },
-                        required = new[] { "translations" }
-                    }
-                }
-            },
-            ["tool_choice"] = new
-            {
-                type = "tool",
-                name = "record_translation_batch"
-            }
-        });
+        return _messagesClient.CompleteBatchAsync(
+            $"{_endpoint}/messages",
+            _apiKey,
+            _version!,
+            _requestTemplate!,
+            replacements,
+            _maxTokens,
+            strict: false,
+            cancellationToken);
+    }
 
-        var content = new StringContent(
-            bodyJson,
-            Encoding.UTF8,
-            "application/json");
-
-        var response = await _httpClient.PostAsync($"{_endpoint}/messages", content, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "Anthropic batch API request failed with status {StatusCode}: {ResponseContent}",
-                response.StatusCode, 
-                responseContent);
-            throw HttpFailure.FromResponse(
-                "Anthropic",
-                response,
-                $"Anthropic batch API request failed with status {response.StatusCode}: {responseContent}");
-        }
-
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        var jsonResponse = JsonSerializer.Deserialize<JsonElement>(responseBody);
-
-        var stopReason = jsonResponse.TryGetProperty("stop_reason", out var stopReasonProperty)
-            ? stopReasonProperty.GetString()
-            : null;
-
-        // Extract tool use result from Anthropic response
-        if (!jsonResponse.TryGetProperty("content", out var contentArray) ||
-            contentArray.GetArrayLength() == 0)
-        {
-            throw new TranslationException(
-                $"Anthropic returned no content (stop_reason: {stopReason ?? "unknown"}).");
-        }
-
-        JsonElement? toolUseContent = null;
-        foreach (var contentItem in contentArray.EnumerateArray())
-        {
-            if (contentItem.TryGetProperty("type", out var typeProperty) &&
-                typeProperty.GetString() == "tool_use")
-            {
-                toolUseContent = contentItem;
-                break;
-            }
-        }
-
-        if (!toolUseContent.HasValue ||
-            !toolUseContent.Value.TryGetProperty("input", out var inputProperty) ||
-            !inputProperty.TryGetProperty("translations", out var translationsProperty))
-        {
-            throw new TranslationException(
-                $"Anthropic response contained no tool_use block (stop_reason: {stopReason ?? "unknown"}).");
-        }
-
-        try
-        {
-            var translatedItems = translationsProperty.EnumerateArray()
-                .Select(t => new StructuredBatchResponse
-                {
-                    Position = t.GetProperty("position").GetInt32(),
-                    Line = t.GetProperty("line").GetString() ?? string.Empty
-                })
-                .ToList();
-
-            return BatchResponseMerger.MergeByPosition(translatedItems);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to parse translated results from tool use");
-            throw new TranslationException("Failed to parse translated subtitles", ex);
-        }
+    /// <summary>
+    /// Per-request cancellation token: the caller's token combined with the configured request
+    /// timeout. The injected <see cref="HttpClient"/> is shared and never mutated, so the same
+    /// instance can serve several providers with different timeouts.
+    /// </summary>
+    private CancellationTokenSource CreateRequestTimeout(CancellationToken cancellationToken)
+    {
+        var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_requestTimeout);
+        return timeout;
     }
 
     /// <inheritdoc />
@@ -511,59 +358,6 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
             };
         }
 
-        var url = $"{_endpoint}/models";
-
-        try
-        {
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add("x-api-key", apiKey);
-            request.Headers.Add("anthropic-version", version);
-
-            var response = await _httpClient.SendAsync(request);
-
-            var responseContent = await response.Content.ReadAsStringAsync();
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogError(
-                    "Failed to fetch models. Status: {StatusCode}, response: {ResponseContent}",
-                    response.StatusCode, responseContent);
-                return new ModelsResponse
-                {
-                    Message = $"Failed to fetch models. Status: {response.StatusCode}, response: {responseContent}"
-                };
-            }
-
-            var jsonResponse = JsonSerializer.Deserialize<JsonElement>(responseContent);
-
-            if (!jsonResponse.TryGetProperty("data", out var dataElement))
-            {
-                return new ModelsResponse
-                {
-                    Message = "Invalid response format from Anthropic API."
-                };
-            }
-
-            var labelValues = dataElement.EnumerateArray()
-                .Select(model => new LabelValue
-                {
-                    // Set label to be name instead of display_name
-                    Label = model.GetProperty("id").GetString() ?? string.Empty,
-                    Value = model.GetProperty("id").GetString() ?? string.Empty
-                })
-                .ToList();
-
-            return new ModelsResponse
-            {
-                Options = labelValues
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error fetching models from Anthropic API");
-            return new ModelsResponse
-            {
-                Message = "Error fetching models from Anthropic API: " + ex.Message
-            };
-        }
+        return await AnthropicMessagesModelCatalog.FetchAsync(_httpClient, _endpoint!, apiKey, version);
     }
 }

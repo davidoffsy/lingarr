@@ -12,6 +12,7 @@ public class OpenAiCompatibleEndpointTests
     [InlineData("http://localhost:8000/v1", "http://localhost:8000/v1/chat/completions")]
     [InlineData("http://localhost:8000/v1/", "http://localhost:8000/v1/chat/completions")]
     [InlineData("http://localhost:8000/v1/chat/completions", "http://localhost:8000/v1/chat/completions")]
+    [InlineData("http://localhost:8000/v1/messages", "http://localhost:8000/v1/chat/completions")]
     [InlineData("http://localhost:11434/api/generate", "http://localhost:11434/v1/chat/completions")]
     [InlineData("https://gateway.example.com/openai", "https://gateway.example.com/openai/v1/chat/completions")]
     [InlineData("https://gateway.example.com/openai/v1/chat/completions", "https://gateway.example.com/openai/v1/chat/completions")]
@@ -29,11 +30,36 @@ public class OpenAiCompatibleEndpointTests
     [InlineData("http://localhost:8000/responses", "http://localhost:8000/v1/responses")]
     // A path of the other protocol is still an API path: it is replaced, never treated as a base URL.
     [InlineData("http://localhost:8000/v1/chat/completions", "http://localhost:8000/v1/responses")]
+    [InlineData("http://localhost:8000/v1/messages", "http://localhost:8000/v1/responses")]
     [InlineData("https://gateway.example.com/openai", "https://gateway.example.com/openai/v1/responses")]
     [InlineData("https://gateway.example.com/openai/v1/responses", "https://gateway.example.com/openai/v1/responses")]
     public void ResolveResponsesUrl_AppendsMissingPath(string endpoint, string expected)
     {
         Assert.Equal(expected, OpenAiCompatibleEndpoint.ResolveResponsesUrl(endpoint));
+    }
+
+    [Theory]
+    [InlineData("http://localhost:8000", "http://localhost:8000/v1/messages")]
+    [InlineData("http://localhost:8000/", "http://localhost:8000/v1/messages")]
+    [InlineData("http://localhost:8000/v1", "http://localhost:8000/v1/messages")]
+    [InlineData("http://localhost:8000/v1/", "http://localhost:8000/v1/messages")]
+    [InlineData("http://localhost:8000/v1/messages", "http://localhost:8000/v1/messages")]
+    [InlineData("http://localhost:8000/messages", "http://localhost:8000/v1/messages")]
+    // A path of another protocol is still an API path: it is replaced, never treated as a base URL.
+    [InlineData("http://localhost:8000/v1/chat/completions", "http://localhost:8000/v1/messages")]
+    [InlineData("http://localhost:8000/v1/responses", "http://localhost:8000/v1/messages")]
+    [InlineData("https://gateway.example.com/anthropic/v1/messages", "https://gateway.example.com/anthropic/v1/messages")]
+    public void ResolveMessagesUrl_AppendsMissingPath(string endpoint, string expected)
+    {
+        Assert.Equal(expected, OpenAiCompatibleEndpoint.ResolveMessagesUrl(endpoint));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void ResolveMessagesUrl_Empty_Throws(string endpoint)
+    {
+        Assert.Throws<ArgumentException>(() => OpenAiCompatibleEndpoint.ResolveMessagesUrl(endpoint));
     }
 
     [Theory]
@@ -49,6 +75,7 @@ public class OpenAiCompatibleEndpointTests
     [InlineData("http://localhost:8000/v1", "http://localhost:8000/v1/models")]
     [InlineData("http://localhost:8000/v1/chat/completions", "http://localhost:8000/v1/models")]
     [InlineData("http://localhost:8000/v1/models", "http://localhost:8000/v1/models")]
+    [InlineData("http://localhost:8000/v1/messages", "http://localhost:8000/v1/models")]
     [InlineData("https://gateway.example.com/openai/v1", "https://gateway.example.com/openai/v1/models")]
     public void ResolveModelsUrl_AppendsModelsPath(string endpoint, string expected)
     {

@@ -10,7 +10,8 @@ namespace Lingarr.Server.Services.Translation;
 public enum CustomProtocol
 {
     OpenAiChat,
-    OpenAiResponses
+    OpenAiResponses,
+    AnthropicMessages
 }
 
 public static class CustomProtocols
@@ -43,11 +44,17 @@ public static class CustomProtocols
             return true;
         }
 
+        if (string.Equals(normalized, SettingKeys.Translation.Custom.Protocols.AnthropicMessages, StringComparison.OrdinalIgnoreCase))
+        {
+            protocol = CustomProtocol.AnthropicMessages;
+            return true;
+        }
+
         protocol = CustomProtocol.OpenAiChat;
         return false;
     }
 
     /// <summary>The supported setting values, used in configuration error messages.</summary>
     public static string SupportedValues =>
-        $"'{SettingKeys.Translation.Custom.Protocols.OpenAiChat}' or '{SettingKeys.Translation.Custom.Protocols.OpenAiResponses}'";
+        $"'{SettingKeys.Translation.Custom.Protocols.OpenAiChat}', '{SettingKeys.Translation.Custom.Protocols.OpenAiResponses}' or '{SettingKeys.Translation.Custom.Protocols.AnthropicMessages}'";
 }
