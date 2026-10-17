@@ -1,7 +1,8 @@
 <template>
     <CardComponent title="Translation Request">
         <template #description>
-            Modify translation request settings by changing retry options or batch size if available in the service.
+            Modify translation request settings by changing retry options or batch size if available
+            in the service.
         </template>
         <template #content>
             <SaveNotification ref="saveNotification" />
@@ -10,11 +11,11 @@
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Use batch translation</span>
                     Process multiple subtitle lines together in batches to improve translation
-                    efficiency and context awareness. Note that single-line translations with context
-                    are still more reliable and of higher quality.
+                    efficiency and context awareness. Note that single-line translations with
+                    context are still more reliable and of higher quality.
                 </div>
                 <ToggleButton v-model="useBatchTranslation">
-                    <span class="text-sm font-medium text-primary-content">
+                    <span class="text-primary-content text-sm font-medium">
                         {{ useBatchTranslation == 'true' ? 'Enabled' : 'Disabled' }}
                     </span>
                 </ToggleButton>
@@ -23,7 +24,8 @@
             <template v-if="useBatchTranslation == 'true'">
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Batch size:</span>
-                    Number of subtitle lines per request. 50–100 is a good balance of speed and context.
+                    Number of subtitle lines per request. 50–100 is a good balance of speed and
+                    context.
                 </div>
                 <InputComponent
                     v-model="maxBatchSize"
@@ -49,9 +51,9 @@
                 <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Thinking</span>
                     Controls whether the model spends tokens on chain-of-thought. Auto (default)
-                    sends no thinking field — the compatible choice for Ollama and most OpenCode
-                    Go models. Off writes thinking.disabled (needed for OpenCode Go / MiMo). On
-                    writes thinking.enabled. Only applied to the providers that translate through the
+                    sends no thinking field — the compatible choice for Ollama and most OpenCode Go
+                    models. Off writes thinking.disabled (needed for OpenCode Go / MiMo). On writes
+                    thinking.enabled. Only applied to the providers that translate through the
                     shared OpenAI-compatible chat (LocalAI and Custom).
                 </div>
                 <SelectComponent
@@ -103,7 +105,13 @@
 <script setup lang="ts">
 import { computed, ref, reactive } from 'vue'
 import { useSettingStore } from '@/store/setting'
-import { AI_THINKING_MODES, chainProviders, INPUT_VALIDATION_TYPE, SERVICE_TYPE, SETTINGS } from '@/ts'
+import {
+    AI_THINKING_MODES,
+    chainProviders,
+    INPUT_VALIDATION_TYPE,
+    SERVICE_TYPE,
+    SETTINGS
+} from '@/ts'
 import CardComponent from '@/components/common/CardComponent.vue'
 import SaveNotification from '@/components/common/SaveNotification.vue'
 import InputComponent from '@/components/common/InputComponent.vue'
@@ -127,39 +135,35 @@ const thinkingOptions = [
     { value: AI_THINKING_MODES.ON, label: 'On' }
 ]
 
-const serviceType = computed(
-    () => chainProviders(settingsStore.getSetting(SETTINGS.SERVICE_TYPE))[0] ?? ''
+const AI_SERVICE_TYPES = new Set<string>([
+    SERVICE_TYPE.ANTHROPIC,
+    SERVICE_TYPE.DEEPSEEK,
+    SERVICE_TYPE.GEMINI,
+    SERVICE_TYPE.LOCALAI,
+    SERVICE_TYPE.CUSTOM,
+    SERVICE_TYPE.MISTRAL,
+    SERVICE_TYPE.OPENAI,
+    SERVICE_TYPE.XAI
+])
+
+/** Every provider currently in the chain, so mixed chains still expose the options they need. */
+const chainServiceTypes = computed(() =>
+    chainProviders(settingsStore.getSetting(SETTINGS.SERVICE_TYPE))
 )
 
 const isAiService = computed(() =>
-    [
-        SERVICE_TYPE.ANTHROPIC,
-        SERVICE_TYPE.DEEPSEEK,
-        SERVICE_TYPE.GEMINI,
-        SERVICE_TYPE.LOCALAI,
-        SERVICE_TYPE.CUSTOM,
-        SERVICE_TYPE.MISTRAL,
-        SERVICE_TYPE.OPENAI,
-        SERVICE_TYPE.XAI
-    ].includes(
-        serviceType.value as
-            | 'openai'
-            | 'anthropic'
-            | 'localai'
-            | 'custom'
-            | 'gemini'
-            | 'deepseek'
-            | 'mistral'
-            | 'xai'
-    )
+    chainServiceTypes.value.some((provider) => AI_SERVICE_TYPES.has(provider))
 )
 
 /**
  * Providers that read the shared `ai_thinking` setting. `LocalAiService` and `CustomService` both
- * translate through the shared OpenAI-compatible chat, so the setting applies to both of them.
+ * translate through the shared OpenAI-compatible chat, so the setting applies when either appears
+ * anywhere in the chain, not only as the primary service.
  */
-const usesSharedChatThinking = computed(
-    () => serviceType.value === SERVICE_TYPE.LOCALAI || serviceType.value === SERVICE_TYPE.CUSTOM
+const usesSharedChatThinking = computed(() =>
+    chainServiceTypes.value.some(
+        (provider) => provider === SERVICE_TYPE.LOCALAI || provider === SERVICE_TYPE.CUSTOM
+    )
 )
 
 const useBatchTranslation = computed({

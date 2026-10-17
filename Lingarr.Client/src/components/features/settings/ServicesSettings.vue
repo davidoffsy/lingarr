@@ -7,7 +7,10 @@
         <template #content>
             <SaveNotification ref="saveNotification" />
 
-            <div class="space-y-2">
+            <div v-if="!settingsLoaded" class="text-sm opacity-60">
+                Loading translation services...
+            </div>
+            <div v-else class="space-y-2">
                 <span class="font-semibold">Translation services</span>
                 <ol class="space-y-1">
                     <li
@@ -29,6 +32,11 @@
                                         :selected="row.provider"
                                         :options="serviceOptions"
                                         size="sm"
+                                        :no-options="
+                                            pluginListUnavailable
+                                                ? 'The provider list is unavailable.'
+                                                : 'No providers available.'
+                                        "
                                         @update:selected="
                                             (value: string) => updateProvider(row.id, value)
                                         " />
@@ -40,6 +48,25 @@
                                         @update:model-value="
                                             (value: string) => updateModel(row.id, value)
                                         " />
+                                </div>
+                                <div v-else-if="row.model.trim()" class="w-52">
+                                    <TranslationChainModelField
+                                        v-if="pluginListUnavailable"
+                                        :provider="row.provider"
+                                        :model-value="row.model"
+                                        @update:model-value="
+                                            (value: string) => updateModel(row.id, value)
+                                        " />
+                                    <p v-else class="truncate text-xs" :title="row.model">
+                                        {{ row.model }}
+                                    </p>
+                                    <button
+                                        v-if="showClearUnsupportedModel(row)"
+                                        type="button"
+                                        class="text-xs text-red-500 hover:underline"
+                                        @click="clearModel(row.id)">
+                                        Clear unsupported model
+                                    </button>
                                 </div>
                                 <div class="flex items-center">
                                     <button
@@ -100,7 +127,11 @@
                                 :title="addRowDisabledReason ?? undefined"
                                 @click="addRow">
                                 <PlusIcon class="mr-1 h-3 w-3" />
-                                Add fallback service
+                                {{
+                                    rows.length === 0
+                                        ? 'Add translation service'
+                                        : 'Add fallback service'
+                                }}
                             </ButtonComponent>
                             <span v-if="addRowDisabledReason" class="text-xs opacity-60">
                                 {{ addRowDisabledReason }}
@@ -108,6 +139,13 @@
                         </div>
                     </li>
                 </ol>
+                <p v-if="pluginListUnavailable" class="text-sm text-amber-500">
+                    The provider list could not be loaded. Stored models still show and can be typed
+                    or cleared.
+                </p>
+                <p v-if="storedChainNotice" class="text-sm text-amber-500">
+                    {{ storedChainNotice }}
+                </p>
                 <p v-if="saveError" class="text-sm text-red-500">{{ saveError }}</p>
                 <p v-if="unsavedNotice" class="text-sm text-amber-500">{{ unsavedNotice }}</p>
                 <p
@@ -119,7 +157,9 @@
                 <p v-if="fallbackNotice" class="text-sm text-amber-500">{{ fallbackNotice }}</p>
             </div>
 
-            <div v-if="configuringManifest || manifestError" class="mt-4 space-y-2">
+            <div
+                v-if="settingsLoaded && (configuringManifest || manifestError)"
+                class="mt-4 space-y-2">
                 <div class="text-sm">
                     <span class="text-secondary-content/60">Configuring credentials for</span>
                     <span class="ml-1 font-semibold">{{ configuringLabel }}</span>
@@ -131,7 +171,7 @@
                 <p v-else-if="manifestError" class="text-sm text-red-500">{{ manifestError }}</p>
             </div>
 
-            <div v-if="configuringManifest?.hasRequestTemplate" class="mt-6">
+            <div v-if="settingsLoaded && configuringManifest?.hasRequestTemplate" class="mt-6">
                 <div class="flex flex-col gap-4">
                     <div class="flex flex-col space-x-2">
                         <span class="font-semibold">Customize request template and prompts</span>
@@ -167,7 +207,6 @@ import {
     parseTranslationChain,
     serializeTranslationChain,
     SETTINGS,
-    SERVICE_TYPE,
     usedChainProviders
 } from '@/ts'
 import servicesApi from '@/services'
@@ -185,9 +224,6 @@ import TrashIcon from '@/components/icons/TrashIcon.vue'
 import PlusIcon from '@/components/icons/PlusIcon.vue'
 import SettingIcon from '@/components/icons/SettingIcon.vue'
 
-/** Provider the editor shows when nothing usable is stored; an empty chain stays a local placeholder. */
-const FALLBACK_PROVIDER = SERVICE_TYPE.LIBRETRANSLATE
-
 interface IChainValidationResult {
     issues: ITranslationChainIssue[]
     usedDefaultFallback: boolean
@@ -203,22 +239,26 @@ const serviceOptions = ref<ISelectOption[]>([])
 const pluginSummaries = ref<Map<string, IPluginSummary>>(new Map())
 const providersLoaded = ref(false)
 
-function storedChainValue(): string {
-    const raw = settingsStore.getSetting(SETTINGS.SERVICE_TYPE)
-    // The store is filled asynchronously, so a value that is not a string yet reads as an empty chain.
-    return typeof raw === 'string' ? raw : ''
-}
+const settingsLoaded = computed(() => settingsStore.getSetting(SETTINGS.SERVICE_TYPE) !== undefined)
+
+const pluginListUnavailable = computed(
+    () => providersLoaded.value && serviceOptions.value.length === 0
+)
 
 /** Last value the server is known to hold; restored when a save request fails. */
-const savedChain = ref<string>(storedChainValue())
-const rows = ref<IChainRow[]>(
-    applyChainEntries([], parseTranslationChain(savedChain.value), FALLBACK_PROVIDER)
-)
+const savedChain = ref<string>('')
+const rows = ref<IChainRow[]>([])
 const validation = ref<IChainValidationResult | null>(null)
 const saveError = ref<string | null>(null)
-const configuringRowId = ref<string | null>(rows.value[0]?.id ?? null)
+const configuringRowId = ref<string | null>(null)
 const configuringManifest = ref<IPluginManifest | null>(null)
 const manifestError = ref<string | null>(null)
+/** Monotonic counter so overlapping persist calls can drop a stale validate or save. */
+let persistGeneration = 0
+/** True while the persist loop is running; overlapping calls only replace `pendingNext`. */
+let persistInFlight = false
+/** Latest chain to persist; always replaced, never queued behind an older value. */
+let pendingNext: IChainRow[] | null = null
 /** True while a settings write is in flight, so the store watcher ignores our own optimistic write. */
 let saveInFlight = false
 
@@ -252,9 +292,28 @@ const chainIssues = computed(() =>
  */
 const unsavedNotice = computed<string | null>(() =>
     validation.value && !validation.value.isValid
-        ? 'The chain is not saved while a row shows an error. Fix the rows above to store it.'
+        ? 'The chain is not saved. Fix the errors above to store it.'
         : null
 )
+
+/**
+ * Empty or unreadable stored values must not look like a saved LibreTranslate row. Runtime still
+ * falls back to the default provider, which is said here instead of rendered as an editable chain.
+ */
+const storedChainNotice = computed<string | null>(() => {
+    if (!settingsLoaded.value) {
+        return null
+    }
+
+    const raw = savedChain.value
+    if (parseTranslationChain(raw).length > 0 || rows.value.length > 0) {
+        return null
+    }
+
+    return raw.trim()
+        ? 'The stored value is not a valid translation chain. It has not been replaced with a default provider. Add a service to overwrite it.'
+        : 'No translation service is stored. The default provider applies at runtime until a valid chain is saved.'
+})
 
 const fallbackNotice = computed<string | null>(() => {
     const result = validation.value
@@ -313,6 +372,10 @@ function supportsModelOverride(provider: string): boolean {
     return pluginSummaries.value.get(provider.trim().toLowerCase())?.supportsModelOverride === true
 }
 
+function showClearUnsupportedModel(row: IChainRow): boolean {
+    return row.model.trim() !== '' && providersLoaded.value && !supportsModelOverride(row.provider)
+}
+
 /** Provider of the row whose credentials are being configured, lower cased for comparisons. */
 function configuredProvider(): string {
     return configuringRow.value?.provider.trim().toLowerCase() ?? ''
@@ -327,7 +390,7 @@ function rowIssuesFor(index: number): ITranslationChainIssue[] {
  * round-trip neither steals focus nor drops a model draft that is still being typed.
  */
 function adoptStoredChain(raw: unknown): void {
-    rows.value = applyChainEntries(rows.value, parseTranslationChain(raw), FALLBACK_PROVIDER)
+    rows.value = applyChainEntries(rows.value, parseTranslationChain(raw))
     validation.value = null
 
     if (!rows.value.some((row) => row.id === configuringRowId.value)) {
@@ -336,28 +399,75 @@ function adoptStoredChain(raw: unknown): void {
 }
 
 /**
- * Degraded validation used when the validation endpoint is unreachable: the server knows the installed
- * providers and their model support, but a settings page must not block every save while it is down.
+ * Client-side checks that match the server validator for empty/unknown/duplicate rows. Used both as
+ * a fast reject before calling the endpoint and as the only check we can still run if the plugin
+ * list never loaded (unknown providers then cannot be proven).
  */
 function localValidation(entries: ITranslationChainEntry[]): IChainValidationResult {
+    const issues: ITranslationChainIssue[] = []
+    if (entries.length === 0) {
+        issues.push({
+            kind: 'EmptyChain',
+            index: -1,
+            message: 'The translation chain has no entries.',
+            value: null
+        })
+    }
+
+    const known = pluginSummaries.value
+    for (const [index, entry] of entries.entries()) {
+        const provider = (entry.provider ?? '').trim()
+        if (!provider) {
+            issues.push({
+                kind: 'EmptyProvider',
+                index,
+                message: 'Chain entry has no provider identifier.',
+                value: null
+            })
+            continue
+        }
+
+        const key = provider.toLowerCase()
+        if (known.size > 0 && !known.has(key)) {
+            issues.push({
+                kind: 'UnknownProvider',
+                index,
+                message: `Unknown translation provider '${provider}'.`,
+                value: provider
+            })
+            continue
+        }
+
+        const model = entry.model?.trim()
+        if (model && known.size > 0 && known.get(key)?.supportsModelOverride !== true) {
+            issues.push({
+                kind: 'ModelOverrideNotSupported',
+                index,
+                message: `Provider '${provider}' does not support a per-candidate model; remove the model override.`,
+                value: model
+            })
+        }
+    }
+
     const duplicate = duplicateChainEntryIndex(entries)
-    const issues: ITranslationChainIssue[] =
-        duplicate < 0
-            ? []
-            : [
-                  {
-                      // Same kind the server reports, so the UI does not have to distinguish them.
-                      kind: 'DuplicateProviderModel',
-                      index: duplicate,
-                      message: `This row repeats ${describeEntry(entries[duplicate])} earlier in the chain.`,
-                      value: null
-                  }
-              ]
+    if (duplicate >= 0) {
+        issues.push({
+            kind: 'DuplicateProviderModel',
+            index: duplicate,
+            message: `This row repeats ${describeEntry(entries[duplicate])} earlier in the chain.`,
+            value: null
+        })
+    }
 
     return { issues, usedDefaultFallback: false, candidates: [], isValid: issues.length === 0 }
 }
 
 async function validateChain(entries: ITranslationChainEntry[]): Promise<IChainValidationResult> {
+    const local = localValidation(entries)
+    if (!local.isValid) {
+        return local
+    }
+
     try {
         const response = await servicesApi.translationChain.validateTranslationChain(
             serializeTranslationChain(entries)
@@ -371,45 +481,99 @@ async function validateChain(entries: ITranslationChainEntry[]): Promise<IChainV
         }
     } catch (error) {
         console.error('Failed to validate the translation chain', error)
-        return localValidation(entries)
+        return {
+            issues: [
+                {
+                    kind: 'ValidationUnavailable',
+                    index: -1,
+                    message:
+                        'The translation chain could not be validated. Check the connection and try again.',
+                    value: null
+                }
+            ],
+            usedDefaultFallback: false,
+            candidates: [],
+            isValid: false
+        }
     }
 }
 
 /**
  * Applies an edit and tries to store it.
  *
- * A chain the server rejects stays in the editor with its messages shown inline and nothing is stored,
- * because only the user can fix the offending row. A settings write that fails instead rolls the
- * editor back to the last saved chain, so no value is ever left looking saved while it is not.
+ * Overlapping calls collapse to the latest `next`: only one validate/save pair runs at a time, a
+ * stale result is discarded, and a newer edit replaces `pendingNext` instead of starting a second
+ * request. A chain the server rejects stays in the editor; a settings write that fails rolls back to
+ * the last saved chain, unless a newer persist has already superseded it.
  */
-async function persist(next: IChainRow[]): Promise<boolean> {
+async function persist(next: IChainRow[]): Promise<void> {
+    if (!settingsLoaded.value) {
+        return
+    }
+
+    persistGeneration += 1
+    pendingNext = next
     rows.value = next
     saveError.value = null
 
-    const entries = chainRowEntries(next)
+    if (persistInFlight) {
+        return
+    }
+
+    persistInFlight = true
+    try {
+        while (pendingNext !== null) {
+            const snapshot = pendingNext
+            pendingNext = null
+            const generation = persistGeneration
+            await persistSnapshot(snapshot, generation)
+        }
+    } finally {
+        persistInFlight = false
+    }
+}
+
+async function persistSnapshot(snapshot: IChainRow[], generation: number): Promise<void> {
+    const entries = chainRowEntries(snapshot)
     const result = await validateChain(entries)
+    if (generation !== persistGeneration) {
+        return
+    }
+
     validation.value = result
     if (!result.isValid) {
-        return false
+        return
+    }
+
+    if (generation !== persistGeneration) {
+        return
     }
 
     const serialized = serializeTranslationChain(entries)
     saveInFlight = true
     try {
         await settingsStore.updateSetting(SETTINGS.SERVICE_TYPE, serialized, true)
+        // The server now holds this value even if a newer edit is already queued.
         savedChain.value = serialized
+        if (generation !== persistGeneration) {
+            return
+        }
+
         validation.value = null
         saveNotification.value?.show()
-        return true
     } catch (error) {
         console.error('Failed to save the translation chain', error)
+        if (generation !== persistGeneration) {
+            return
+        }
+
         // updateSetting writes the setting into the store before the request, so a failed save leaves
-        // the in-memory value ahead of the server: restore the saved chain, which also re-derives the
-        // editor through the store watcher.
+        // the in-memory value ahead of the server. Restore explicitly: the watcher is muted while
+        // saveInFlight is true.
         settingsStore.storeSetting(SETTINGS.SERVICE_TYPE, savedChain.value)
+        adoptStoredChain(savedChain.value)
         saveError.value =
             'The translation chain could not be saved. Check the connection and try again.'
-        return false
     } finally {
         saveInFlight = false
     }
@@ -448,6 +612,10 @@ function updateModel(rowId: string, model: string): void {
     void persist(
         rows.value.map((entry, current) => (current === index ? { ...entry, model } : entry))
     )
+}
+
+function clearModel(rowId: string): void {
+    updateModel(rowId, '')
 }
 
 function addRow(): void {
@@ -545,10 +713,16 @@ watch(
             return
         }
 
+        if (raw === undefined) {
+            // Settings have not loaded yet. Do not treat that as an empty chain or render a placeholder.
+            return
+        }
+
         savedChain.value = typeof raw === 'string' ? raw : ''
         adoptStoredChain(raw)
         saveError.value = null
-    }
+    },
+    { immediate: true }
 )
 
 watch(
