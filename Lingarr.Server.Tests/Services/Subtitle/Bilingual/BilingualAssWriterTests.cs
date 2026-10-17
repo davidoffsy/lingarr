@@ -54,9 +54,9 @@ public class BilingualAssWriterTests
         var output = await Write(Cue(0, 1000, ["A"], ["B"]));
 
         Assert.Contains("LingarrTarget,Noto Sans CJK SC,64,&H00FFFFFF", output);
-        Assert.Contains("LingarrSource,Noto Sans CJK SC,46,&H0066D9FF", output);
+        Assert.Contains("LingarrSource,Noto Sans CJK SC,38,&H005AA3C4", output);
         Assert.Contains("&H00000000", output);
-        Assert.Contains(",2,1,2,20,20,48,1", output);
+        Assert.Contains(",2,1,2,20,20,16,1", output);
     }
 
     [Fact]
@@ -149,13 +149,13 @@ public class BilingualAssWriterTests
     }
 
     [Fact]
-    public async Task WriteAsync_JoinsLanguageLinesWithAssBreak()
+    public async Task WriteAsync_CollapsesLanguageLinesToSingleLine()
     {
         var item = Cue(0, 1000, ["Hello", "there"], ["你好", "啊"]);
 
         var output = await Write(item);
 
-        Assert.Contains("你好\\N啊\\N{\\rLingarrSource}Hello\\Nthere", output);
+        Assert.Contains("你好 啊\\N{\\rLingarrSource}Hello there", output);
     }
 
     [Fact]

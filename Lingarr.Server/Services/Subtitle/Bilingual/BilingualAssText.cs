@@ -58,7 +58,11 @@ internal static class BilingualAssText
         return cleaned;
     }
 
-    public static string Join(IReadOnlyList<string> lines) => string.Join("\\N", lines);
+    /// <summary>
+    /// Collapses a language's lines into one ASS line. Intra-language <c>\N</c>
+    /// would stack with the bilingual break and produce three-line cues.
+    /// </summary>
+    public static string Join(IReadOnlyList<string> lines) => string.Join(" ", lines);
 
     public static string Escape(string text) =>
         text.Replace("{", "\\{", StringComparison.Ordinal)
