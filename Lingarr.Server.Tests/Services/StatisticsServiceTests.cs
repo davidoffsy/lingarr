@@ -145,6 +145,32 @@ public class StatisticsServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateTranslationStatisticsFromSubtitles_MultiLineCue_CountsOnePositionAndKeepsTheInvariant()
+    {
+        // Attribution is one source per subtitle position. A cue with two Lines must not make
+        // TotalLinesTranslated (previously Sum(Lines.Count)) diverge from Sum(LinesBySource).
+        var sources = SummaryOf(new TranslationSource("openai", "gpt-4o"));
+        var subtitles = new List<SubtitleItem>
+        {
+            new()
+            {
+                Position = 0,
+                Lines = ["hello", "world"],
+                PlaintextLines = ["hello", "world"],
+                TranslatedLines = ["hola", "mundo"]
+            }
+        };
+
+        await _statisticsService.UpdateTranslationStatisticsFromSubtitles(NewRequest(), sources, subtitles);
+
+        var stats = await _statisticsService.GetStatistics();
+        Assert.Equal(1, stats.TotalLinesTranslated);
+        Assert.Equal(1, stats.LinesBySource["openai:gpt-4o"]);
+        Assert.Equal(stats.TotalLinesTranslated, stats.LinesBySource.Values.Sum());
+        Assert.Equal(10, stats.TotalCharactersTranslated);
+    }
+
+    [Fact]
     public async Task UpdateTranslationStatisticsFromLines_NoAttributedLines_LeavesEveryCounterUntouched()
     {
         var updated = await _statisticsService.UpdateTranslationStatisticsFromLines(

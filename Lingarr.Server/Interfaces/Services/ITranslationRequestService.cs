@@ -117,8 +117,11 @@ public interface ITranslationRequestService
     /// </summary>
     /// <param name="proofreadLineRequest">The source line, its translation and the language pair</param>
     /// <param name="cancellationToken">Token to cancel the proofread operation</param>
-    /// <returns>The corrected translation, or null when no configured service can proofread</returns>
-    Task<string?> ProofreadLine(
+    /// <returns>
+    /// The corrected translation and the candidate that produced it, or null when no configured
+    /// service can proofread
+    /// </returns>
+    Task<ProofreadLineResponse?> ProofreadLine(
         ProofreadLineRequest proofreadLineRequest,
         CancellationToken cancellationToken);
 

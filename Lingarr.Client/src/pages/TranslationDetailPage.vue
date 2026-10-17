@@ -244,6 +244,7 @@ import {
     ILineTranslated,
     ILineProofread,
     ISubtitleLineComparison,
+    IProofreadLineResponse,
     ProofreadLineOrigin,
     PROOFREAD_LINE_ORIGIN,
     TRANSLATION_STATUS,
@@ -273,6 +274,8 @@ const props = defineProps<{
 interface IProofreadLineState {
     loading: boolean
     suggestion?: string
+    service?: string
+    model?: string | null
     draft?: string
     error?: string
 }
@@ -369,13 +372,18 @@ async function requestProofread(line: ISubtitleLineComparison) {
     }
     proofreadState[line.position] = { loading: true }
     try {
-        const suggestion = await services.translate.proofreadLine<string>({
+        const result = await services.translate.proofreadLine<IProofreadLineResponse>({
             sourceLine: line.source,
             translatedLine: line.target,
             sourceLanguage: detail.value.sourceLanguage,
             targetLanguage: detail.value.targetLanguage
         })
-        proofreadState[line.position] = { loading: false, suggestion }
+        proofreadState[line.position] = {
+            loading: false,
+            suggestion: result.revision,
+            service: result.service,
+            model: result.model
+        }
     } catch {
         proofreadState[line.position] = {
             loading: false,
@@ -411,12 +419,16 @@ async function applyLine(
     if (!detail.value || !target) {
         return
     }
+    const state = proofreadState[line.position]
     try {
         await translationRequestStore.applyProofreadLine({
             id: detail.value.id,
             position: line.position,
             target,
-            origin
+            origin,
+            service:
+                origin === PROOFREAD_LINE_ORIGIN.PROOFREAD ? state?.service : undefined,
+            model: origin === PROOFREAD_LINE_ORIGIN.PROOFREAD ? state?.model : undefined
         })
     } catch {
         proofreadState[line.position] = {

@@ -107,6 +107,7 @@ public class ProofreadJob
             var total = translatedSubtitles.Count;
             var iteration = 0;
             var lastProgress = -1;
+            var unusableProviders = new HashSet<string>();
 
             foreach (var subtitle in translatedSubtitles)
             {
@@ -129,6 +130,7 @@ public class ProofreadJob
                             request.SourceLanguage,
                             request.TargetLanguage,
                             _logger,
+                            unusableProviders,
                             cancellationToken);
 
                         if (proofread is { } revisedLine

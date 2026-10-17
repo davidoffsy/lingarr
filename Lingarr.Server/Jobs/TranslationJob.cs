@@ -1,5 +1,6 @@
 using Hangfire;
 using Lingarr.Contracts.Exceptions;
+using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Translation;
 using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
@@ -225,7 +226,17 @@ public class TranslationJob
             // Group by Position and keep the most recent row in case the same position was used more than once.
             var persistedLines = (await _dbContext.TranslationRequestLines
                     .Where(line => line.TranslationRequestId == request.Id)
-                    .Select(line => new { line.Id, line.Position, line.Target, line.Service, line.Model })
+                    .Select(line => new
+                    {
+                        line.Id,
+                        line.Position,
+                        line.Target,
+                        line.Service,
+                        line.Model,
+                        line.MatchedSource,
+                        line.MatchedTarget,
+                        line.Tier
+                    })
                     .ToListAsync(cancellationToken))
                 .GroupBy(line => line.Position)
                 .ToDictionary(g => g.Key, g => g.OrderByDescending(l => l.Id).First());
@@ -245,14 +256,19 @@ public class TranslationJob
                 }
 
                 // Attribution of the lines an earlier run translated, so the translator tag and the
-                // source statistics cover the whole file instead of only this run's lines.
+                // source statistics cover the whole file instead of only this run's lines. Pair is
+                // restored when it was stored (non-exact matches); Exact pairs are persisted as null
+                // and that is enough for resume to still Record stacked cache hits.
                 translator.SeedAttribution(persistedLines
                     .Where(line => !string.IsNullOrEmpty(line.Value.Service))
                     .ToDictionary(
                         line => line.Key,
                         line => new TranslationAttribution(
                             new TranslationSource(line.Value.Service!, line.Value.Model),
-                            null)));
+                            StoredPair(
+                                line.Value.MatchedSource,
+                                line.Value.MatchedTarget,
+                                line.Value.Tier))));
             }
 
             List<SubtitleItem> translatedSubtitles;
@@ -505,6 +521,25 @@ public class TranslationJob
         await _translationRequestService.UpdateActiveCount();
         await _progressService.Emit(translationRequest, 100);
         await _scheduleService.UpdateJobState(jobName, JobStatus.Succeeded.GetDisplayName());
+    }
+
+    /// <summary>
+    /// Rebuilds the language pair an earlier run stored on a line. Exact matches are not persisted,
+    /// so missing codes become null rather than a fake Exact pair.
+    /// </summary>
+    private static LanguagePair? StoredPair(string? matchedSource, string? matchedTarget, MatchTier? tier)
+    {
+        if (string.IsNullOrEmpty(matchedSource) || string.IsNullOrEmpty(matchedTarget))
+        {
+            return null;
+        }
+
+        return new LanguagePair
+        {
+            Source = matchedSource,
+            Target = matchedTarget,
+            Tier = tier ?? MatchTier.Exact
+        };
     }
 
     private async Task HandleCancellation(string jobName, TranslationRequest request)

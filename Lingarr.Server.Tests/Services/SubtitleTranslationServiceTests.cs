@@ -22,6 +22,7 @@ using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Translation;
+using Lingarr.Server.Services.Translation.Attribution;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Moq.Protected;
@@ -832,21 +833,23 @@ public class SubtitleTranslationServiceTests
     }
 
     [Fact]
-    public async Task ProcessSubtitleBatch_MissingTranslation_FallsBackToOriginalLines()
+    public async Task ProcessSubtitleBatch_MissingTranslation_DoesNotWriteOriginalLines()
     {
-        // Arrange - a 1-item empty result is terminal and writes the original lines
+        // A 1-item empty batch result is terminal for that candidate, but must not copy the source
+        // into TranslatedLines (that would look like success and skip later candidates). The harness
+        // line service fails, so the file still cannot complete.
         var harness = CreateBatchHarness(_ => new Dictionary<int, string>());
         var subtitles = new List<SubtitleItem> { Subtitle(1, "hello", "world") };
 
-        // Act
-        await harness.Service.ProcessSubtitleBatch(subtitles,
-            "en", "es",
-            stripSubtitleFormatting: false,
-            preserveLineBreaks: false,
-            CancellationToken.None);
+        await Assert.ThrowsAsync<TranslationException>(() =>
+            harness.Service.ProcessSubtitleBatch(subtitles,
+                "en", "es",
+                stripSubtitleFormatting: false,
+                preserveLineBreaks: false,
+                CancellationToken.None));
 
-        // Assert
-        Assert.Equal(["hello", "world"], subtitles[0].TranslatedLines);
+        Assert.Empty(subtitles[0].TranslatedLines);
+        Assert.True(harness.Service.SourceSummary.IsEmpty);
         Assert.Single(harness.BatchCalls);
     }
 
@@ -1040,6 +1043,66 @@ public class SubtitleTranslationServiceTests
         deepl.Verify(translationService => translationService.TranslateAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ProcessSubtitleBatch_MissingTranslation_FallsBackToLineTranslation()
+    {
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        var openaiLine = MockService(pair, _ => "hola");
+        var openaiBatch = new Mock<IBatchTranslationService>();
+        openaiBatch.Setup(batchService => batchService.TranslateBatchAsync(
+                It.IsAny<List<BatchSubtitleItem>>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<int, string>());
+        var service = new SubtitleTranslationService(
+            [new TranslationServiceEntry("openai", openaiLine.Object, openaiBatch.Object)],
+            NullLogger.Instance,
+            MockProgressService().Object);
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello") };
+
+        await service.ProcessSubtitleBatch(subtitles,
+            "en", "es",
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            CancellationToken.None);
+
+        Assert.Equal(["hola"], subtitles[0].TranslatedLines);
+        Assert.Equal("openai", Assert.Single(service.SourceSummary.Counts).Source.Provider);
+        openaiBatch.Verify(batchService => batchService.TranslateBatchAsync(
+            It.IsAny<List<BatchSubtitleItem>>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        openaiLine.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TranslateSubtitlesBatch_CallerCancellationBetweenBatches_ThrowsAndDoesNotContinue()
+    {
+        using var cts = new CancellationTokenSource();
+        var harness = CreateBatchHarness(items =>
+        {
+            cts.Cancel();
+            return items.ToDictionary(item => item.Position, item => $"tr:{item.Line}");
+        });
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "one"), Subtitle(2, "two") };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            harness.Service.TranslateSubtitlesBatch(
+                subtitles,
+                NewRequest(),
+                stripSubtitleFormatting: false,
+                preserveLineBreaks: false,
+                batchSize: 1,
+                cts.Token));
+
+        Assert.Equal(["tr:one"], subtitles[0].TranslatedLines);
+        Assert.Empty(subtitles[1].TranslatedLines);
     }
 
     #endregion
@@ -1254,6 +1317,30 @@ public class SubtitleTranslationServiceTests
         next.Verify(translationService => translationService.TranslateAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task TranslateSubtitles_CallerCancellationBetweenLines_ThrowsAndDoesNotContinue()
+    {
+        using var cts = new CancellationTokenSource();
+        var harness = CreatePerLineHarness(_ =>
+        {
+            cts.Cancel();
+            return "hola";
+        });
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello"), Subtitle(2, "world") };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            harness.Service.TranslateSubtitles(subtitles, NewRequest(),
+                stripSubtitleFormatting: false,
+                preserveLineBreaks: false,
+                contextBefore: 0,
+                contextAfter: 0,
+                cts.Token));
+
+        Assert.Equal(["hola"], subtitles[0].TranslatedLines);
+        Assert.Empty(subtitles[1].TranslatedLines);
+        Assert.Equal(1, harness.Service.SourceSummary.TotalLines);
     }
 
     [Fact]
@@ -1508,6 +1595,45 @@ public class SubtitleTranslationServiceTests
         Assert.Equal("test", count.Source.Provider);
         Assert.Equal(2, count.Lines);
         Assert.Equal(2, harness.Service.AttributionByPosition.Count);
+    }
+
+    [Fact]
+    public async Task TranslateSubtitles_ResumeStackedLine_RecordsCachedSourceWhenPairIsNull()
+    {
+        // Resume seeds the already-translated layer with Pair=null (Exact matches are not stored).
+        // The stacked sibling is served from cache and must still be attributed to that source.
+        var harness = CreatePerLineHarness(_ => "should not run");
+        var first = Subtitle(1, "hello");
+        first.StartTime = 1000;
+        first.EndTime = 2000;
+        first.TranslatedLines = ["hola"];
+        var second = Subtitle(2, "hello");
+        second.StartTime = 1000;
+        second.EndTime = 2000;
+
+        harness.Service.SeedAttribution(new Dictionary<int, TranslationAttribution>
+        {
+            [1] = new TranslationAttribution(new TranslationSource("openai", "gpt-4o"), null)
+        });
+
+        await harness.Service.TranslateSubtitles([first, second], NewRequest(),
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            contextBefore: 0,
+            contextAfter: 0,
+            CancellationToken.None);
+
+        harness.TranslationServiceMock.Verify(
+            translationService => translationService.TranslateAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        Assert.Equal(["hola"], second.TranslatedLines);
+        Assert.Equal(2, harness.Service.AttributionByPosition.Count);
+        Assert.Equal("openai", harness.Service.AttributionByPosition[2].Source.Provider);
+        Assert.Equal("gpt-4o", harness.Service.AttributionByPosition[2].Source.Model);
+        Assert.Null(harness.Service.AttributionByPosition[2].Pair);
+        Assert.Equal(2, harness.Service.SourceSummary.TotalLines);
     }
 
     [Fact]

@@ -531,7 +531,7 @@ public class TranslationRequestService : ITranslationRequestService
     }
 
     /// <inheritdoc />
-    public async Task<string?> ProofreadLine(
+    public async Task<ProofreadLineResponse?> ProofreadLine(
         ProofreadLineRequest proofreadLineRequest,
         CancellationToken cancellationToken)
     {
@@ -548,8 +548,20 @@ public class TranslationRequestService : ITranslationRequestService
             proofreadLineRequest.SourceLanguage,
             proofreadLineRequest.TargetLanguage,
             _logger,
+            [],
             cancellationToken);
-        return result?.Revision;
+        if (result is not { } proofread)
+        {
+            return null;
+        }
+
+        var source = TranslationSource.FromCandidate(proofread.Entry);
+        return new ProofreadLineResponse
+        {
+            Revision = proofread.Revision,
+            Service = source.Provider,
+            Model = source.Model
+        };
     }
 
     /// <inheritdoc />
@@ -633,12 +645,15 @@ public class TranslationRequestService : ITranslationRequestService
         {
             source = new TranslationSource(ManualService, null);
         }
+        else if (!string.IsNullOrWhiteSpace(applyRequest.Service))
+        {
+            source = new TranslationSource(applyRequest.Service, applyRequest.Model);
+        }
         else
         {
-            // Same candidate as ProofreadJob would have used: the first proofread-capable one of the
-            // configured chain. Without a candidate the line keeps the provider that translated it.
-            var candidates = await ResolveProofreadCandidates();
-            source = candidates.Count == 0 ? null : TranslationSource.FromCandidate(candidates[0]);
+            // Keep the translator that produced the line rather than pretending the first
+            // proofread-capable candidate of the chain did the revision.
+            source = null;
         }
 
         await _progressService.EmitProofreadLine(
@@ -983,10 +998,6 @@ public class TranslationRequestService : ITranslationRequestService
                     contextBefore,
                     contextAfter,
                     cancellationToken);
-
-                // TranslateSubtitles returns partial results when cancellation lands between two lines.
-                // Surface it here so the request is marked Cancelled and nothing partial reaches statistics.
-                cancellationToken.ThrowIfCancellationRequested();
 
                 results = subtitleItems.Select(subtitle =>
                 {

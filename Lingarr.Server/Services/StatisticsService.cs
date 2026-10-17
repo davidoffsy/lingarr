@@ -74,11 +74,9 @@ public class StatisticsService : IStatisticsService
         TranslationSourceSummary sources,
         List<SubtitleItem> translatedSubtitles)
     {
-        var lineCount = translatedSubtitles.Sum(s => s.Lines.Count);
         var charCount = translatedSubtitles.Sum(s => s.Lines.Sum(l => l.Length));
 
-        return await UpdateTranslationStatisticsInternal(
-            request, sources, lineCount, charCount);
+        return await UpdateTranslationStatisticsInternal(request, sources, charCount);
     }
 
     public async Task<int> UpdateTranslationStatisticsFromLines(
@@ -86,17 +84,14 @@ public class StatisticsService : IStatisticsService
         TranslationSourceSummary sources,
         BatchTranslatedLine[] translatedLines)
     {
-        var lineCount = translatedLines.Length;
         var charCount = translatedLines.Sum(s => s.Line.Length);
 
-        return await UpdateTranslationStatisticsInternal(
-            request, sources, lineCount, charCount);
+        return await UpdateTranslationStatisticsInternal(request, sources, charCount);
     }
 
     private async Task<int> UpdateTranslationStatisticsInternal(
         TranslationRequest request,
         TranslationSourceSummary sources,
-        int totalLines,
         int totalCharacters)
     {
         var stats = await GetOrCreateStatistics();
@@ -108,12 +103,13 @@ public class StatisticsService : IStatisticsService
         // position was already translated by an earlier run, or the remaining lines failed -- must
         // therefore not touch any of them, otherwise the "by service" breakdown the front end shows
         // stops adding up to the file total.
-        // totalLines/totalCharacters describe exactly the positions covered by sources (the caller passes
-        // the same set), so they are updated together with the attribution below and never on their own.
+        // Line totals use sources.TotalLines (one per attributed position, matching LinesBySource),
+        // not Sum(cue.Lines.Count): a multi-line cue would otherwise make TotalLinesTranslated diverge
+        // from Sum(LinesBySource). Characters still come from the caller's subtitle/line texts.
         if (!sources.IsEmpty)
         {
             // Update total counts
-            stats.TotalLinesTranslated += totalLines;
+            stats.TotalLinesTranslated += sources.TotalLines;
             stats.TotalCharactersTranslated += totalCharacters;
             stats.TotalFilesTranslated++;
 

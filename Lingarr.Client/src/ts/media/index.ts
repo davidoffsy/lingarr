@@ -97,11 +97,19 @@ export interface IProofreadLineRequest {
     targetLanguage: string
 }
 
+export interface IProofreadLineResponse {
+    revision: string
+    service: string
+    model?: string | null
+}
+
 export interface IProofreadLineApplyRequest {
     id: number
     position: number
     target: string
     origin: ProofreadLineOrigin
+    service?: string | null
+    model?: string | null
 }
 
 export const PROOFREAD_LINE_ORIGIN = {

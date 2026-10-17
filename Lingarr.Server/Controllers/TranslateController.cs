@@ -138,9 +138,9 @@ public class TranslateController : ControllerBase
     /// </summary>
     /// <param name="proofreadLineRequest">The source line, its translation and the language pair</param>
     /// <param name="cancellationToken">Token to cancel the proofread operation</param>
-    /// <returns>Returns the corrected translation if a configured service can proofread.</returns>
+    /// <returns>The corrected translation and the candidate that produced it, if a configured service can proofread.</returns>
     [HttpPost("proofread")]
-    public async Task<ActionResult<string>> ProofreadLine(
+    public async Task<ActionResult<ProofreadLineResponse>> ProofreadLine(
         [FromBody] ProofreadLineRequest proofreadLineRequest,
         CancellationToken cancellationToken)
     {

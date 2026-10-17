@@ -166,11 +166,7 @@ public class SubtitleTranslationService
         {
             var subtitle = subtitles[index];
 
-            if (cancellationToken.IsCancellationRequested)
-            {
-                _lastProgression = -1;
-                break;
-            }
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (subtitle.TranslatedLines.Count > 0)
             {
@@ -184,13 +180,22 @@ public class SubtitleTranslationService
                         // Carry the attribution of the line the translation came from (seeded
                         // attribution from earlier runs included), so a reused position is credited to
                         // the provider/model that really produced it instead of counting as un-attributed.
-                        _sources.TryGet(subtitle.Position, out var cachedAttribution);
+                        // TryGet can miss when resume had no stored service; do not cache a default
+                        // source, or a stacked sibling would Record an empty provider.
+                        TranslationSource? cachedSource = null;
+                        LanguagePair? cachedPair = null;
+                        if (_sources.TryGet(subtitle.Position, out var cachedAttribution))
+                        {
+                            cachedSource = cachedAttribution.Source;
+                            cachedPair = cachedAttribution.Pair;
+                        }
+
                         translationCache.TryAdd(
                             cacheKey,
                             new CachedLine(
                                 string.Join(" ", subtitle.TranslatedLines),
-                                cachedAttribution.Source,
-                                cachedAttribution.Pair));
+                                cachedSource,
+                                cachedPair));
                     }
                 }
 
@@ -250,7 +255,7 @@ public class SubtitleTranslationService
 
             var sourceText = string.Join(" ", contentLines);
             var translatedText = string.Join(" ", subtitle.TranslatedLines);
-            if (source != null && pair != null)
+            if (source != null)
             {
                 _sources.Record(subtitle.Position, new TranslationAttribution(source.Value, pair));
             }
@@ -386,11 +391,7 @@ public class SubtitleTranslationService
 
         for (var batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                _lastProgression = -1;
-                break;
-            }
+            cancellationToken.ThrowIfCancellationRequested();
 
             var currentBatch = subtitles
                 .Skip(batchIndex * batchSize)
@@ -483,8 +484,19 @@ public class SubtitleTranslationService
                     stripSubtitleFormatting,
                     preserveLineBreaks,
                     cancellationToken);
-                _scheduler.LogFallback(candidate, sourceLanguage, targetLanguage);
-                return toTranslate;
+                if (toTranslate.TrueForAll(subtitle => subtitle.TranslatedLines.Count > 0))
+                {
+                    _scheduler.LogFallback(candidate, sourceLanguage, targetLanguage);
+                    return toTranslate;
+                }
+
+                lastError = new TranslationException(
+                    $"{candidate.Entry.Describe()} left untranslated positions in the batch.");
+                _logger.LogWarning(
+                    "Batch translation service {Service} left {Remaining} of {Total} positions untranslated; trying the next candidate.",
+                    candidate.Entry.Describe(),
+                    toTranslate.Count(subtitle => subtitle.TranslatedLines.Count == 0),
+                    toTranslate.Count);
             }
             catch (TranslationAuthenticationException ex)
             {
@@ -576,7 +588,7 @@ public class SubtitleTranslationService
                 : ToSubtitleLines(translatedLines[0], contentLines.Count, preserveLineBreaks,
                     stripSubtitleFormatting, subtitle.Position);
 
-            if (source != null && pair != null)
+            if (source != null)
             {
                 _sources.Record(subtitle.Position, new TranslationAttribution(source.Value, pair));
             }
@@ -658,9 +670,8 @@ public class SubtitleTranslationService
                 }
 
                 _logger.LogWarning(
-                    "Translation not found for subtitle at position {Position} using original line.",
+                    "Translation not found for subtitle at position {Position}; leaving it for a later candidate.",
                     subtitle.Position);
-                subtitle.TranslatedLines = contentLines;
             }
         }
     }

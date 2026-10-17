@@ -27,6 +27,8 @@ public static class ProofreadCandidateRunner
     /// <summary>
     /// Proofreads one line with the first candidate that answers, or returns null when no candidate
     /// produced a revision. Cancellation is always propagated, never turned into a fallback.
+    /// Providers marked unusable (rejected credentials, unusable configuration) are skipped and
+    /// added to <paramref name="unusableProviders"/> so a later line of the same job does not retry them.
     /// </summary>
     /// <param name="candidates">Proofread-capable candidates, in the order they should be tried.</param>
     /// <param name="sourceText">Source line the translation is reviewed against.</param>
@@ -34,6 +36,9 @@ public static class ProofreadCandidateRunner
     /// <param name="sourceLanguage">Source language code.</param>
     /// <param name="targetLanguage">Target language code.</param>
     /// <param name="logger">Logger for fallback and failure diagnostics.</param>
+    /// <param name="unusableProviders">
+    /// Providers that already failed in a way that affects every model. The runner mutates this set.
+    /// </param>
     /// <param name="cancellationToken">Token to support cancellation of the operation.</param>
     public static async Task<ProofreadResult?> ProofreadAsync(
         IReadOnlyList<TranslationServiceEntry> candidates,
@@ -42,16 +47,17 @@ public static class ProofreadCandidateRunner
         string sourceLanguage,
         string targetLanguage,
         ILogger logger,
+        HashSet<string> unusableProviders,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(candidates);
+        ArgumentNullException.ThrowIfNull(unusableProviders);
 
         if (candidates.Count == 0)
         {
             return null;
         }
 
-        var unusableProviders = new HashSet<string>();
         Exception? lastError = null;
 
         foreach (var candidate in candidates)
