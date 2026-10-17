@@ -81,7 +81,7 @@ public class TranslationFactory : ITranslationServiceFactory
 
             "anthropic" => new AnthropicService(
                 _serviceProvider.GetRequiredService<ISettingService>(),
-                _serviceProvider.GetRequiredService<HttpClient>(),
+                CreateHttpClient(),
                 _serviceProvider.GetRequiredService<ILogger<AnthropicService>>(),
                 languageCodeService,
                 _serviceProvider.GetRequiredService<IRequestTemplateService>()
@@ -89,7 +89,7 @@ public class TranslationFactory : ITranslationServiceFactory
 
             "localai" => new LocalAiService(
                 _serviceProvider.GetRequiredService<ISettingService>(),
-                _serviceProvider.GetRequiredService<HttpClient>(),
+                CreateHttpClient(),
                 _serviceProvider.GetRequiredService<ILogger<LocalAiService>>(),
                 languageCodeService,
                 _serviceProvider.GetRequiredService<IRequestTemplateService>()
@@ -97,7 +97,7 @@ public class TranslationFactory : ITranslationServiceFactory
 
             "custom" => new CustomService(
                 _serviceProvider.GetRequiredService<ISettingService>(),
-                _serviceProvider.GetRequiredService<HttpClient>(),
+                CreateHttpClient(),
                 _serviceProvider.GetRequiredService<ILogger<CustomService>>(),
                 languageCodeService,
                 _serviceProvider.GetRequiredService<IRequestTemplateService>()
@@ -105,7 +105,7 @@ public class TranslationFactory : ITranslationServiceFactory
 
             "deepseek" => new DeepSeekService(
                 _serviceProvider.GetRequiredService<ISettingService>(),
-                _serviceProvider.GetRequiredService<HttpClient>(),
+                CreateHttpClient(),
                 _serviceProvider.GetRequiredService<ILogger<DeepSeekService>>(),
                 languageCodeService,
                 _serviceProvider.GetRequiredService<IRequestTemplateService>()
@@ -113,7 +113,7 @@ public class TranslationFactory : ITranslationServiceFactory
 
             "mistral" => new MistralService(
                 _serviceProvider.GetRequiredService<ISettingService>(),
-                _serviceProvider.GetRequiredService<HttpClient>(),
+                CreateHttpClient(),
                 _serviceProvider.GetRequiredService<ILogger<MistralService>>(),
                 languageCodeService,
                 _serviceProvider.GetRequiredService<IRequestTemplateService>()
@@ -121,7 +121,7 @@ public class TranslationFactory : ITranslationServiceFactory
 
             "xai" => new XAiService(
                 _serviceProvider.GetRequiredService<ISettingService>(),
-                _serviceProvider.GetRequiredService<HttpClient>(),
+                CreateHttpClient(),
                 _serviceProvider.GetRequiredService<ILogger<XAiService>>(),
                 languageCodeService,
                 _serviceProvider.GetRequiredService<IRequestTemplateService>()
@@ -129,7 +129,7 @@ public class TranslationFactory : ITranslationServiceFactory
 
             "gemini" => new GoogleGeminiService(
                 _serviceProvider.GetRequiredService<ISettingService>(),
-                _serviceProvider.GetRequiredService<HttpClient>(),
+                CreateHttpClient(),
                 _serviceProvider.GetRequiredService<ILogger<GoogleGeminiService>>(),
                 languageCodeService,
                 _serviceProvider.GetRequiredService<IRequestTemplateService>()
@@ -209,4 +209,11 @@ public class TranslationFactory : ITranslationServiceFactory
             model);
         return false;
     }
+
+    /// <summary>
+    /// A new <see cref="HttpClient"/> from the factory. Each call is a distinct instance, so a
+    /// provider can set <see cref="HttpClient.Timeout"/> without affecting other candidates.
+    /// </summary>
+    private HttpClient CreateHttpClient() =>
+        _serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient();
 }

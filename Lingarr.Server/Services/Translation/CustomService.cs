@@ -58,6 +58,7 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
         : base(settings, logger, languageCodeService)
     {
         _httpClient = httpClient;
+        TranslationRequestTimeout.DisableClientTimeout(_httpClient);
         _requestTemplateService = requestTemplateService;
         _chatClient = new OpenAiChatCompletionsClient(
             httpClient,
@@ -236,8 +237,10 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
         {
             try
             {
-                using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await CompleteOnceAsync(replacements, requestTimeout.Token);
+                return await TranslationRequestTimeout.ExecuteAsync(
+                    _requestTimeout,
+                    token => CompleteOnceAsync(replacements, token),
+                    cancellationToken);
             }
             catch (TranslationResponseException ex)
             {
@@ -289,8 +292,10 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
         {
             try
             {
-                using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await CompleteOnceAsync(replacements, requestTimeout.Token);
+                return await TranslationRequestTimeout.ExecuteAsync(
+                    _requestTimeout,
+                    token => CompleteOnceAsync(replacements, token),
+                    cancellationToken);
             }
             catch (TranslationResponseException ex)
             {
@@ -339,8 +344,10 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
         {
             try
             {
-                using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await TranslateBatchWithCustomApi(subtitleBatch, requestTimeout.Token);
+                return await TranslationRequestTimeout.ExecuteAsync(
+                    _requestTimeout,
+                    token => TranslateBatchWithCustomApi(subtitleBatch, token),
+                    cancellationToken);
             }
             catch (TranslationResponseException ex)
             {
@@ -462,18 +469,6 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
                 _maxTokens,
                 cancellationToken)
         };
-
-    /// <summary>
-    /// Per-request cancellation token: the caller's token combined with the configured request
-    /// timeout. The injected <see cref="HttpClient"/> is shared and never mutated, so the same
-    /// instance can serve several providers with different timeouts.
-    /// </summary>
-    private CancellationTokenSource CreateRequestTimeout(CancellationToken cancellationToken)
-    {
-        var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(_requestTimeout);
-        return timeout;
-    }
 
     /// <inheritdoc />
     public override async Task<ModelsResponse> GetModels()

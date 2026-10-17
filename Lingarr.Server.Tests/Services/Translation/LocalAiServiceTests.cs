@@ -393,6 +393,78 @@ public class LocalAiServiceTests
     }
 
     [Fact]
+    public async Task TranslateAsync_RequestTimeout_IsRetried()
+    {
+        UseSettings(GenerateEndpoint);
+        _httpMessageHandlerMock.Protected()
+            .SetupSequence<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new TaskCanceledException())
+            .ReturnsAsync(GenerateResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestsSent(2);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_RequestTimeout_RetriesUntilLimit()
+    {
+        UseSettings(GenerateEndpoint);
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ThrowsAsync(new TaskCanceledException());
+
+        await Assert.ThrowsAsync<TranslationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        VerifyRequestsSent(3);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_CallerCancellation_DoesNotRetry()
+    {
+        UseSettings(GenerateEndpoint);
+        using var cts = new CancellationTokenSource();
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback(() => cts.Cancel())
+            .ThrowsAsync(new TaskCanceledException());
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, cts.Token));
+
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public void Constructor_DisablesHttpClientTimeout_WithoutChangingOtherClients()
+    {
+        using var other = new HttpClient();
+        var originalOther = other.Timeout;
+        using var client = new HttpClient();
+
+        _ = new LocalAiService(
+            _settingsMock.Object,
+            client,
+            _loggerMock.Object,
+            new LanguageCodeService(),
+            new RequestTemplateService());
+
+        Assert.Equal(Timeout.InfiniteTimeSpan, client.Timeout);
+        Assert.Equal(originalOther, other.Timeout);
+    }
+
+    [Fact]
     public async Task TranslateAsync_AutoBareHost_PostsToGenerate()
     {
         UseSettings("http://localhost:11434", SettingKeys.Translation.LocalAi.Protocols.Auto);

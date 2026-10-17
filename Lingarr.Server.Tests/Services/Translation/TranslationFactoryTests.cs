@@ -46,10 +46,9 @@ public class TranslationFactoryTests
     ];
 
     /// <summary>
-    /// Builds a minimal real container for the factory. Only providers that do not need
-    /// IHttpClientFactory/HttpClient are exercised here ("deepl", "openai", "custom", "localai");
-    /// everything they require is registered below: the real LanguageCodeService, mocked setting/template
-    /// services and logging.
+    /// Builds a minimal real container for the factory, matching production: providers obtain
+    /// <see cref="HttpClient"/> from <see cref="IHttpClientFactory"/> (not a singleton instance).
+    /// LanguageCodeService is real; setting/template services are mocked.
     /// </summary>
     private static TranslationFactory CreateFactory()
     {
@@ -59,7 +58,6 @@ public class TranslationFactoryTests
         services.AddSingleton<LanguageCodeService>();
         services.AddSingleton<ISettingService>(Mock.Of<ISettingService>());
         services.AddSingleton<IRequestTemplateService>(Mock.Of<IRequestTemplateService>());
-        services.AddSingleton(new HttpClient());
 
         var serviceProvider = services.BuildServiceProvider();
         return new TranslationFactory(serviceProvider, NullLogger<TranslationFactory>.Instance);

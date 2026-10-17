@@ -1165,6 +1165,37 @@ public class SubtitleTranslationServiceTests
     }
 
     [Fact]
+    public async Task TranslateSubtitleLine_CallerCancellation_DoesNotFallBackToNextCandidate()
+    {
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        using var cts = new CancellationTokenSource();
+        var cancelled = new Mock<ITranslationService>();
+        cancelled.Setup(service => service.GetLanguagePair(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pair);
+        cancelled.Setup(service => service.TranslateAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback(() => cts.Cancel())
+            .ThrowsAsync(new OperationCanceledException());
+        var next = MockService(pair, _ => "should not run");
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("custom", cancelled.Object, null, "model-a"),
+                new TranslationServiceEntry("deepl", next.Object, null)
+            ],
+            NullLogger.Instance);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.TranslateSubtitleLine(
+                new TranslateAbleSubtitleLine { SubtitleLine = "hi", SourceLanguage = "en", TargetLanguage = "es" },
+                cts.Token));
+
+        next.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task TranslateSubtitleLine_AuthenticationFailure_SkipsRemainingModelsOfThatProvider()
     {
         // Arrange - the first candidate rejects the credentials. Every model of a provider shares

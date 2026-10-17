@@ -52,6 +52,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         : base(settings, logger, languageCodeService)
     {
         _httpClient = httpClient;
+        TranslationRequestTimeout.DisableClientTimeout(_httpClient);
         _requestTemplateService = requestTemplateService;
         _chatClient = new OpenAiChatCompletionsClient(
             httpClient,
@@ -178,8 +179,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         {
             try
             {
-                using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await CompleteWithLocalAiApi(replacements, requestTimeout.Token);
+                return await TranslationRequestTimeout.ExecuteAsync(
+                    _requestTimeout,
+                    token => CompleteWithLocalAiApi(replacements, token),
+                    cancellationToken);
             }
             catch (TranslationResponseException ex)
             {
@@ -231,8 +234,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         {
             try
             {
-                using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await CompleteWithLocalAiApi(replacements, requestTimeout.Token);
+                return await TranslationRequestTimeout.ExecuteAsync(
+                    _requestTimeout,
+                    token => CompleteWithLocalAiApi(replacements, token),
+                    cancellationToken);
             }
             catch (TranslationResponseException ex)
             {
@@ -283,18 +288,6 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     }
 
     /// <summary>
-    /// Per-request cancellation token: the caller's token combined with the configured request
-    /// timeout. The injected <see cref="HttpClient"/> is shared and never mutated, so the same
-    /// instance can serve several providers with different timeouts.
-    /// </summary>
-    private CancellationTokenSource CreateRequestTimeout(CancellationToken cancellationToken)
-    {
-        var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(_requestTimeout);
-        return timeout;
-    }
-
-    /// <summary>
     /// Translates a batch of subtitles in a single API call using structured outputs fallback
     /// Since LocalAI may not support structured outputs, we'll attempt structured format first,
     /// then fall back to regular parsing if needed. Responses that cannot be parsed are retried
@@ -318,8 +311,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         {
             try
             {
-                using var requestTimeout = CreateRequestTimeout(cancellationToken);
-                return await TranslateBatchWithLocalAiApi(subtitleBatch, requestTimeout.Token);
+                return await TranslationRequestTimeout.ExecuteAsync(
+                    _requestTimeout,
+                    token => TranslateBatchWithLocalAiApi(subtitleBatch, token),
+                    cancellationToken);
             }
             catch (TranslationResponseException ex)
             {
