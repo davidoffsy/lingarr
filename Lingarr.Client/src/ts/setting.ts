@@ -61,6 +61,7 @@ export const SETTINGS = {
     STRIP_SUBTITLE_FORMATTING: 'strip_subtitle_formatting',
     PRESERVE_LINE_BREAKS: 'preserve_line_breaks',
     ADD_TRANSLATOR_INFO: 'add_translator_info',
+    EXPORT_BILINGUAL_ASS: 'export_bilingual_ass',
     SUBTITLE_VALIDATION_ENABLED: 'subtitle_validation_enabled',
     SUBTITLE_VALIDATION_MAXDURATIONSECS: 'subtitle_validation_maxdurationsecs',
     SUBTITLE_VALIDATION_MINDURATIONMS: 'subtitle_validation_mindurationms',
@@ -152,6 +153,7 @@ export interface ISettings {
     strip_subtitle_formatting: string
     preserve_line_breaks: string
     add_translator_info: string
+    export_bilingual_ass: string
     theme: ITheme
     locale: ILocale
     subtitle_validation_enabled: string

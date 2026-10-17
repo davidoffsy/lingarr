@@ -199,6 +199,7 @@ public class TranslateControllerContentTests : IDisposable
             new Mock<IMediaFileLocator>().Object,
             new Mock<IEmbeddedSubtitleService>().Object,
             new Mock<ITranslationRequestEventService>().Object,
+            new Mock<Lingarr.Server.Services.Subtitle.Bilingual.IBilingualSubtitleExportService>().Object,
             NullLogger<TranslationRequestService>.Instance);
 
         _controller = new TranslateController(

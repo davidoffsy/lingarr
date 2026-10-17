@@ -5,6 +5,7 @@ using Lingarr.Server.Interfaces.Services.Subtitle;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Subtitle;
+using Lingarr.Server.Services.Subtitle.Bilingual;
 using Lingarr.Server.Services.Translation.Attribution;
 using SubtitleValidationOptions = Lingarr.Server.Models.SubtitleValidationOptions;
 
@@ -42,7 +43,9 @@ public class SubtitleService : ISubtitleService
         {
             var files = Directory.GetFiles(path, $"*{extension}", SearchOption.AllDirectories);
 
-            var subtitleFiles = files.Select(file =>
+            var subtitleFiles = files
+                .Where(file => !BilingualAssPath.IsBilingualSidecar(file))
+                .Select(file =>
             {
                 var fileName = Path.GetFileNameWithoutExtension(file);
                 var parts = fileName.Split('.').Reverse().ToList();

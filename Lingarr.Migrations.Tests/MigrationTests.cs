@@ -40,6 +40,8 @@ public class MigrationTests
             Assert.Equal("auto", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
             command.CommandText = "SELECT value FROM settings WHERE key = 'ai_max_tokens'";
             Assert.Equal("0", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
+            command.CommandText = "SELECT value FROM settings WHERE key = 'export_bilingual_ass'";
+            Assert.Equal("false", await command.ExecuteScalarAsync(TestContext.Current.CancellationToken));
         }
         finally
         {

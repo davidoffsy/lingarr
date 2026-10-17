@@ -133,6 +133,18 @@
                         label="Subtitle tag"
                         @update:validation="(val) => (isValid.subtitleTag = val)" />
                 </div>
+
+                <div class="flex flex-col space-x-2">
+                    <span class="font-semibold">Also export bilingual ASS</span>
+                    When enabled, translation still writes the normal target subtitle, plus a
+                    <code class="text-sm">.bilingual.ass</code>
+                    file with larger target text over smaller source text. Off by default.
+                </div>
+                <ToggleButton v-model="exportBilingualAss">
+                    <span class="text-primary-content text-sm font-medium">
+                        {{ exportBilingualAss == 'true' ? 'Enabled' : 'Disabled' }}
+                    </span>
+                </ToggleButton>
             </div>
         </template>
     </CardComponent>
@@ -251,6 +263,15 @@ const subtitleTag = computed({
     get: (): string => settingsStore.getSetting(SETTINGS.SUBTITLE_TAG) as string,
     set: (newValue: string): void => {
         settingsStore.updateSetting(SETTINGS.SUBTITLE_TAG, newValue, isValid.subtitleTag)
+        saveNotification.value?.show()
+    }
+})
+
+const exportBilingualAss = computed({
+    get: (): string =>
+        (settingsStore.getSetting(SETTINGS.EXPORT_BILINGUAL_ASS) as string) ?? 'false',
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.EXPORT_BILINGUAL_ASS, newValue, true)
         saveNotification.value?.show()
     }
 })

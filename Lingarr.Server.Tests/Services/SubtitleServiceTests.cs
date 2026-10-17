@@ -53,6 +53,21 @@ public class SubtitleServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetAllSubtitles_BilingualAss_IsIgnored()
+    {
+        Touch("Movie.zh.srt");
+        Touch("Movie.zh.bilingual.ass");
+        Touch("Movie.bilingual.ass");
+
+        var subtitles = await _service.GetAllSubtitles(_directory);
+
+        var subtitle = Assert.Single(subtitles);
+        Assert.Equal("Movie.zh.srt", Path.GetFileName(subtitle.Path));
+        Assert.DoesNotContain(subtitles, item =>
+            Path.GetFileName(item.Path).Contains("bilingual", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void CreateFilePath_UntaggedSource_AddsTargetLanguage()
     {
         var original = Path.Combine(_directory, "Reporting Live (2026) WEBRip-1080p.srt");

@@ -26,6 +26,7 @@ using Lingarr.Server.Services.Integration;
 using Lingarr.Server.Services.Plugins;
 using Lingarr.Server.Services.Plugins.Manifests;
 using Lingarr.Server.Services.Subtitle;
+using Lingarr.Server.Services.Subtitle.Bilingual;
 using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Sync;
 using Lingarr.Server.Services.Plex;
@@ -201,6 +202,7 @@ public static class ServiceCollectionExtensions
         builder.Services.AddScoped<ISubtitleParser, SrtParser>();
         builder.Services.AddScoped<ISubtitleWriter, SrtWriter>();
         builder.Services.AddScoped<ISubtitleWriter, SsaWriter>();
+        builder.Services.AddScoped<IBilingualSubtitleExportService, BilingualSubtitleExportService>();
         
         // Register translate services
         builder.Services.AddScoped<ITranslationServiceFactory, TranslationFactory>();

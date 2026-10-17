@@ -9,6 +9,7 @@ using Lingarr.Server.Filters;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Models.FileSystem;
+using Lingarr.Server.Services.Subtitle.Bilingual;
 using Lingarr.Server.Services.Translation;
 using Lingarr.Server.Services.Translation.Attribution;
 using Lingarr.Server.Services.Translation.Chain;
@@ -28,6 +29,7 @@ public class ProofreadJob
     private readonly ITranslationServiceFactory _translationServiceFactory;
     private readonly ITranslationRequestService _translationRequestService;
     private readonly ITranslationRequestEventService _eventService;
+    private readonly IBilingualSubtitleExportService _bilingualExport;
 
     public ProofreadJob(
         ILogger<ProofreadJob> logger,
@@ -38,7 +40,8 @@ public class ProofreadJob
         IScheduleService scheduleService,
         ITranslationServiceFactory translationServiceFactory,
         ITranslationRequestService translationRequestService,
-        ITranslationRequestEventService eventService)
+        ITranslationRequestEventService eventService,
+        IBilingualSubtitleExportService bilingualExport)
     {
         _logger = logger;
         _settings = settings;
@@ -49,6 +52,7 @@ public class ProofreadJob
         _translationServiceFactory = translationServiceFactory;
         _translationRequestService = translationRequestService;
         _eventService = eventService;
+        _bilingualExport = bilingualExport;
     }
 
     [AutomaticRetry(Attempts = 0)]
@@ -166,6 +170,11 @@ public class ProofreadJob
                 request.TranslatedSubtitle,
                 translatedSubtitles,
                 stripSubtitleFormatting);
+
+            await _bilingualExport.TryRegenerateAsync(
+                sourceSubtitles,
+                translatedSubtitles,
+                request.TranslatedSubtitle);
 
             _logger.LogInformation("ProofreadJob completed and rewrote subtitle: |Green|{filePath}|/Green|",
                 request.TranslatedSubtitle);

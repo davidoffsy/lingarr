@@ -13,6 +13,7 @@ using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
 using Lingarr.Server.Services.Media;
+using Lingarr.Server.Services.Subtitle.Bilingual;
 using Lingarr.Server.Services.Translation;
 using Lingarr.Server.Services.Translation.Attribution;
 using Lingarr.Server.Services.Translation.Chain;
@@ -35,6 +36,7 @@ public class TranslationJob
     private readonly ITranslationRequestService _translationRequestService;
     private readonly ITranslationRequestEventService _eventService;
     private readonly IEmbeddedSubtitleService _embeddedSubtitleService;
+    private readonly IBilingualSubtitleExportService _bilingualExport;
 
     public TranslationJob(
         ILogger<TranslationJob> logger,
@@ -47,7 +49,8 @@ public class TranslationJob
         ITranslationServiceFactory translationServiceFactory,
         ITranslationRequestService translationRequestService,
         ITranslationRequestEventService eventService,
-        IEmbeddedSubtitleService embeddedSubtitleService)
+        IEmbeddedSubtitleService embeddedSubtitleService,
+        IBilingualSubtitleExportService bilingualExport)
     {
         _logger = logger;
         _settings = settings;
@@ -60,6 +63,7 @@ public class TranslationJob
         _translationRequestService = translationRequestService;
         _eventService = eventService;
         _embeddedSubtitleService = embeddedSubtitleService;
+        _bilingualExport = bilingualExport;
     }
 
     [AutomaticRetry(Attempts = 0)]
@@ -454,6 +458,8 @@ public class TranslationJob
             await _subtitleService.WriteSubtitles(outputPath, translatedSubtitles, stripSubtitleFormatting);
             translationRequest.TranslatedSubtitle = outputPath;
             await _dbContext.SaveChangesAsync();
+
+            await _bilingualExport.ExportAsync(translatedSubtitles, outputPath);
 
             _logger.LogInformation("TranslateJob completed and created subtitle: |Green|{filePath}|/Green|",
                 outputPath);

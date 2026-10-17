@@ -18,6 +18,7 @@ using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Models.TranslationRequests;
 using Lingarr.Server.Services.Media;
 using Lingarr.Server.Services.Subtitle;
+using Lingarr.Server.Services.Subtitle.Bilingual;
 using Lingarr.Server.Services.Translation;
 using Lingarr.Server.Services.Translation.Attribution;
 using Lingarr.Server.Services.Translation.Chain;
@@ -41,6 +42,7 @@ public class TranslationRequestService : ITranslationRequestService
     private readonly IMediaFileLocator _mediaFileLocator;
     private readonly IEmbeddedSubtitleService _embeddedSubtitleService;
     private readonly ITranslationRequestEventService _eventService;
+    private readonly IBilingualSubtitleExportService _bilingualExport;
     private readonly ILogger<TranslationRequestService> _logger;
     private const string ManualService = "manual";
     private static readonly ConcurrentDictionary<int, CancellationTokenSource> _asyncTranslationJobs = new();
@@ -58,6 +60,7 @@ public class TranslationRequestService : ITranslationRequestService
         IMediaFileLocator mediaFileLocator,
         IEmbeddedSubtitleService embeddedSubtitleService,
         ITranslationRequestEventService eventService,
+        IBilingualSubtitleExportService bilingualExport,
         ILogger<TranslationRequestService> logger)
     {
         _dbContext = dbContext;
@@ -72,6 +75,7 @@ public class TranslationRequestService : ITranslationRequestService
         _mediaFileLocator = mediaFileLocator;
         _embeddedSubtitleService = embeddedSubtitleService;
         _eventService = eventService;
+        _bilingualExport = bilingualExport;
         _logger = logger;
     }
 
@@ -668,6 +672,11 @@ public class TranslationRequestService : ITranslationRequestService
             translationRequest.TranslatedSubtitle,
             translatedSubtitles,
             stripSubtitleFormatting);
+
+        await _bilingualExport.TryRegenerateAsync(
+            sourceSubtitles,
+            translatedSubtitles,
+            translationRequest.TranslatedSubtitle);
 
         return $"Line {applyRequest.Position} of translation request with id {applyRequest.Id} has been updated";
     }

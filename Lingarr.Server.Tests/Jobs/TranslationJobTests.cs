@@ -14,6 +14,7 @@ using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Jobs;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
+using Lingarr.Server.Services.Subtitle.Bilingual;
 using Lingarr.Server.Services.Translation.Attribution;
 using Lingarr.Server.Services.Translation.Chain;
 using Microsoft.Data.Sqlite;
@@ -198,7 +199,8 @@ public class TranslationJobTests : IDisposable
             translationServiceFactoryMock.Object,
             translationRequestServiceMock.Object,
             new Mock<ITranslationRequestEventService>().Object,
-            new Mock<IEmbeddedSubtitleService>().Object);
+            new Mock<IEmbeddedSubtitleService>().Object,
+            new Mock<IBilingualSubtitleExportService>().Object);
     }
 
     public void Dispose()

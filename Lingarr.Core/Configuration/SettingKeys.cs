@@ -149,6 +149,7 @@ public static class SettingKeys
         public const string StripSubtitleFormatting = "strip_subtitle_formatting";
         public const string PreserveLineBreaks = "preserve_line_breaks";
         public const string AddTranslatorInfo = "add_translator_info";
+        public const string ExportBilingualAss = "export_bilingual_ass";
         public const string UseBatchTranslation = "use_batch_translation";
         public const string MaxBatchSize = "max_batch_size";
         public const string UseSubtitleTagging = "use_subtitle_tagging";
