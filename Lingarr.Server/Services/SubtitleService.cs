@@ -456,9 +456,8 @@ public class SubtitleService : ISubtitleService
 
         var ofLanguage = matchingSubtitles.Where(s => s.Language == sourceLanguage);
         var sourceSubtitle = ignoreCaptions == "true"
-            ? Rank(ofLanguage.Where(s => string.IsNullOrEmpty(s.Caption))).FirstOrDefault()
-                ?? Rank(ofLanguage).FirstOrDefault()
-            : Rank(ofLanguage).FirstOrDefault();
+            ? Rank(ofLanguage.Where(s => string.IsNullOrEmpty(s.Caption))) ?? Rank(ofLanguage)
+            : Rank(ofLanguage);
 
         if (sourceSubtitle == null)
         {
@@ -473,17 +472,8 @@ public class SubtitleService : ISubtitleService
         };
     }
 
-    /// <summary>
-    /// Dialogue quality for a translation source. MKV Default is ignored because
-    /// release groups often mark SDH as default. LINQ to Objects is stable, so
-    /// sidecar original order is preserved among equal ranks.
-    /// </summary>
-    private static IOrderedEnumerable<Subtitles> Rank(IEnumerable<Subtitles> subtitles) =>
-        subtitles
-            .OrderBy(subtitle => subtitle.IsEmbedded)
-            .ThenBy(subtitle => SubtitleCaptionFlags.IsForced(subtitle.Caption))
-            .ThenBy(subtitle => SubtitleCaptionFlags.IsHearingImpaired(subtitle.Caption))
-            .ThenBy(subtitle => subtitle.IsEmbedded ? subtitle.TrackIndex ?? int.MaxValue : 0);
+    private static Subtitles? Rank(IEnumerable<Subtitles> subtitles) =>
+        SourceSubtitleRanker.Rank(subtitles, SourceSubtitleRank.ForSubtitles).FirstOrDefault();
 
     private static ISubtitleParser CreateParser(string extension) =>
         extension.ToLowerInvariant() switch

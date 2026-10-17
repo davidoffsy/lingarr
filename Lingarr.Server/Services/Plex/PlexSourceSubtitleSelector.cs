@@ -1,10 +1,11 @@
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Models.Plex;
+using Lingarr.Server.Services.Media;
 
 namespace Lingarr.Server.Services.Plex;
 
 /// <summary>
-/// Plex-only source ranking. Does not read player <c>Stream.selected</c> and ignores MKV Default.
+/// Plex source selection. Does not read player <c>Stream.selected</c> and ignores MKV Default.
 /// <see cref="Select"/> is local-only (configured language, then untagged sidecar, then unique
 /// <c>und</c> embedded). <see cref="PlexRatingTrigger"/> inserts tagged Plex streams between
 /// configured local sources and the untagged fallbacks.
@@ -141,11 +142,11 @@ public static class PlexSourceSubtitleSelector
 
     private static IOrderedEnumerable<PlexSourceSubtitleCandidate> Rank(
         IEnumerable<PlexSourceSubtitleCandidate> candidates) =>
-        candidates
-            .OrderBy(candidate => candidate.IsEmbedded)
-            .ThenBy(candidate => candidate.IsForced)
-            .ThenBy(candidate => candidate.IsHearingImpaired)
-            .ThenBy(candidate => candidate.IsEmbedded ? candidate.TrackIndex : candidate.SidecarOrder);
+        SourceSubtitleRanker.Rank(candidates, candidate => new SourceSubtitleRank(
+            candidate.IsEmbedded,
+            candidate.IsForced,
+            candidate.IsHearingImpaired,
+            candidate.IsEmbedded ? candidate.TrackIndex : candidate.SidecarOrder));
 
     private static bool IsFullDialogue(PlexSourceSubtitleCandidate candidate) =>
         !candidate.IsForced

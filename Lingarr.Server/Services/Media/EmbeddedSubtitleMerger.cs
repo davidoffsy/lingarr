@@ -4,7 +4,8 @@ namespace Lingarr.Server.Services.Media;
 
 /// <summary>
 /// Merges sidecar files with probed MKV text tracks. Matching language + caption
-/// prefers the sidecar so the same dialogue is not translated twice.
+/// prefers the sidecar so the same dialogue is not translated twice. Duplicate
+/// embedded tracks keep the lower stream index; MKV Default is not used.
 /// </summary>
 public static class EmbeddedSubtitleMerger
 {
@@ -24,10 +25,7 @@ public static class EmbeddedSubtitleMerger
 
         foreach (var track in tracks
                      .Where(track => track.CanAutoTranslate)
-                     .OrderByDescending(track => track.IsDefault)
-                     .ThenBy(track => track.IsForced)
-                     .ThenBy(track => track.IsHearingImpaired)
-                     .ThenBy(track => track.Index))
+                     .OrderBy(track => track.Index))
         {
             var key = LanguageCaptionKey(track);
             if (!claimed.Add(key))

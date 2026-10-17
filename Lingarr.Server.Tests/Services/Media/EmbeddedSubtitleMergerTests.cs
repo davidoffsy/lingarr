@@ -66,12 +66,12 @@ public class EmbeddedSubtitleMergerTests
     }
 
     [Fact]
-    public void Merge_PrefersDefaultTrackForTheSameLanguage()
+    public void Merge_KeepsLowerIndexWhenLanguageAndCaptionMatch()
     {
         var tracks = new[]
         {
-            Track(5, "en", "subrip", ".srt"),
-            Track(2, "en", "subrip", ".srt", isDefault: true)
+            Track(5, "en", "subrip", ".srt", isDefault: true),
+            Track(2, "en", "subrip", ".srt")
         };
 
         var merged = EmbeddedSubtitleMerger.Merge([], tracks, MkvPath);
@@ -81,6 +81,22 @@ public class EmbeddedSubtitleMergerTests
         Assert.True(subtitle.IsEmbedded);
         Assert.Equal("subrip", subtitle.CodecName);
         Assert.Equal(MkvPath, subtitle.Path);
+    }
+
+    [Fact]
+    public void Merge_KeepsCleanAndSdhWhenDefaultSdhHasADifferentCaption()
+    {
+        var tracks = new[]
+        {
+            Track(2, "en", "subrip", ".srt", caption: "sdh", isDefault: true),
+            Track(3, "en", "subrip", ".srt")
+        };
+
+        var merged = EmbeddedSubtitleMerger.Merge([], tracks, MkvPath);
+
+        Assert.Equal(2, merged.Count);
+        Assert.Contains(merged, subtitle => subtitle.TrackIndex == 2 && subtitle.Caption == "sdh");
+        Assert.Contains(merged, subtitle => subtitle.TrackIndex == 3 && subtitle.Caption == "");
     }
 
     [Fact]
