@@ -59,6 +59,11 @@ public class LibreService : BaseLanguageService
                 SettingKeys.Translation.RetryDelayMultiplier
             ]);
             _apiUrl = settings[SettingKeys.Translation.LibreTranslate.Url];
+            if (string.IsNullOrWhiteSpace(_apiUrl))
+            {
+                throw new TranslationConfigurationException("LibreTranslate URL is not configured.");
+            }
+
             _apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.LibreTranslate.ApiKey);
             _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
 
@@ -91,7 +96,7 @@ public class LibreService : BaseLanguageService
 
         if (string.IsNullOrEmpty(_apiUrl))
         {
-            throw new InvalidOperationException("LibreTranslate URL is not configured.");
+            throw new TranslationConfigurationException("LibreTranslate URL is not configured.");
         }
 
         var libreTranslateLanguagesUrl = $"{_apiUrl}/languages";
@@ -139,7 +144,7 @@ public class LibreService : BaseLanguageService
 
         if (string.IsNullOrEmpty(_apiUrl))
         {
-            throw new InvalidOperationException("LibreTranslate URL is not configured.");
+            throw new TranslationConfigurationException("LibreTranslate URL is not configured.");
         }
 
         var delay = _retryDelay;
@@ -159,7 +164,7 @@ public class LibreService : BaseLanguageService
 
             var response = await _httpClient.PostAsync($"{_apiUrl}/translate", content, cancellationToken);
 
-            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            if (HttpFailure.IsTransient(response.StatusCode))
             {
                 if (attempt > _maxRetries)
                 {

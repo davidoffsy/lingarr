@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -10,6 +13,7 @@ using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Models;
 using Lingarr.Contracts.Models.Batch;
 using Lingarr.Contracts.Translation;
+using Lingarr.Core.Configuration;
 using Lingarr.Core.Entities;
 using Lingarr.Core.Enum;
 using Lingarr.Server.Interfaces.Services;
@@ -17,8 +21,10 @@ using Lingarr.Server.Interfaces.Services.Translation;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
+using Lingarr.Server.Services.Translation;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Moq.Protected;
 using Xunit;
 
 namespace Lingarr.Server.Tests.Services;
@@ -171,6 +177,15 @@ public class SubtitleTranslationServiceTests
                 batchCalls.Add(items.Select(item => item.Position).ToList());
                 return batchTranslate(items);
             });
+        translationServiceMock
+            .Setup(t => t.TranslateAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<List<string>?>(),
+                It.IsAny<List<string>?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TranslationException("Line translation is not configured in this batch harness."));
 
         var services = new List<TranslationServiceEntry>
         {
@@ -838,7 +853,9 @@ public class SubtitleTranslationServiceTests
     [Fact]
     public async Task ProcessSubtitleBatch_EmptyBatchResult_Throws()
     {
-        // Arrange - two or more items with an empty dict is a service failure, not original fallback
+        // Arrange - two or more items with an empty dict is a service failure, not original fallback.
+        // After the batch candidate fails the chain still tries per-line translation; the harness
+        // line service is set to fail so the file still cannot complete.
         var harness = CreateBatchHarness(_ => new Dictionary<int, string>());
         var subtitles = new List<SubtitleItem> { Subtitle(1, "hello"), Subtitle(2, "world") };
 
@@ -979,6 +996,50 @@ public class SubtitleTranslationServiceTests
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessSubtitleBatch_BatchAuthenticationFailure_FallsBackToLineTranslation()
+    {
+        // openai batch 401 must not fail the file when a later per-line candidate (deepl) can save it.
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        var openaiLine = MockFailingService(pair, new TranslationAuthenticationException("bad key"));
+        var openaiBatch = new Mock<IBatchTranslationService>();
+        openaiBatch.Setup(batchService => batchService.TranslateBatchAsync(
+                It.IsAny<List<BatchSubtitleItem>>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TranslationAuthenticationException("bad key"));
+        var deepl = MockService(pair, _ => "hola");
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("openai", openaiLine.Object, openaiBatch.Object),
+                new TranslationServiceEntry("deepl", deepl.Object, null)
+            ],
+            NullLogger.Instance,
+            MockProgressService().Object);
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello"), Subtitle(2, "world") };
+
+        await service.ProcessSubtitleBatch(subtitles,
+            "en", "es",
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            CancellationToken.None);
+
+        Assert.Equal(["hola"], subtitles[0].TranslatedLines);
+        Assert.Equal(["hola"], subtitles[1].TranslatedLines);
+        openaiBatch.Verify(batchService => batchService.TranslateBatchAsync(
+            It.IsAny<List<BatchSubtitleItem>>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        openaiLine.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Never);
+        deepl.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     #endregion
@@ -1267,6 +1328,154 @@ public class SubtitleTranslationServiceTests
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task TranslateSubtitleLine_OpenAiEmptyKey_TwoModels_InitializesOnceAndSkipsProvider()
+    {
+        var settings = new Mock<ISettingService>();
+        settings.Setup(settingService => settingService.GetEncryptedSetting(SettingKeys.Translation.OpenAi.ApiKey))
+            .ReturnsAsync(string.Empty);
+        settings.Setup(settingService => settingService.GetSettings(It.IsAny<IEnumerable<string>>()))
+            .ReturnsAsync(OpenAiSettings());
+
+        var first = new OpenAiService(
+            settings.Object,
+            NullLogger<OpenAiService>.Instance,
+            new LanguageCodeService(),
+            new RequestTemplateService(),
+            new HttpClient());
+        first.OverrideModel("model-a");
+        var second = new OpenAiService(
+            settings.Object,
+            NullLogger<OpenAiService>.Instance,
+            new LanguageCodeService(),
+            new RequestTemplateService(),
+            new HttpClient());
+        second.OverrideModel("model-b");
+
+        var pair = new LanguagePair { Source = "en", Target = "es", Tier = MatchTier.Exact };
+        var deepl = MockService(pair, _ => "hola");
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("openai", first, first, "model-a"),
+                new TranslationServiceEntry("openai", second, second, "model-b"),
+                new TranslationServiceEntry("deepl", deepl.Object, null)
+            ],
+            NullLogger.Instance);
+
+        var (translation, source, _) = await service.TranslateSubtitleLine(
+            new TranslateAbleSubtitleLine { SubtitleLine = "hi", SourceLanguage = "en", TargetLanguage = "es" },
+            CancellationToken.None);
+
+        Assert.Equal("hola", translation);
+        Assert.Equal("deepl", source.Provider);
+        settings.Verify(
+            settingService => settingService.GetEncryptedSetting(SettingKeys.Translation.OpenAi.ApiKey),
+            Times.Once);
+        deepl.Verify(translationService => translationService.TranslateAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<List<string>?>(), It.IsAny<List<string>?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TranslateSubtitleLine_CustomEmptyDefaultModel_TriesOverrideCandidate()
+    {
+        var settings = new Mock<ISettingService>();
+        settings.Setup(settingService => settingService.GetEncryptedSetting(It.IsAny<string>()))
+            .ReturnsAsync(string.Empty);
+        settings.Setup(settingService => settingService.GetSettings(It.IsAny<IEnumerable<string>>()))
+            .ReturnsAsync(CustomSettings(model: string.Empty));
+
+        var handler = new Mock<HttpMessageHandler>();
+        handler.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.OK,
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new
+                    {
+                        choices = new[] { new { message = new { content = "Hola" } } }
+                    }),
+                    Encoding.UTF8,
+                    "application/json")
+            });
+
+        var first = new CustomService(
+            settings.Object,
+            new HttpClient(handler.Object),
+            NullLogger<CustomService>.Instance,
+            new LanguageCodeService(),
+            new RequestTemplateService());
+        var second = new CustomService(
+            settings.Object,
+            new HttpClient(handler.Object),
+            NullLogger<CustomService>.Instance,
+            new LanguageCodeService(),
+            new RequestTemplateService());
+        second.OverrideModel("model-b");
+
+        var service = new SubtitleTranslationService(
+            [
+                new TranslationServiceEntry("custom", first, first),
+                new TranslationServiceEntry("custom", second, second, "model-b")
+            ],
+            NullLogger.Instance);
+
+        var (translation, source, _) = await service.TranslateSubtitleLine(
+            new TranslateAbleSubtitleLine { SubtitleLine = "hi", SourceLanguage = "en", TargetLanguage = "es" },
+            CancellationToken.None);
+
+        Assert.Equal("Hola", translation);
+        Assert.Equal("custom", source.Provider);
+        Assert.Equal("model-b", source.Model);
+        handler.Protected().Verify(
+            "SendAsync",
+            Times.Once(),
+            ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    private static Dictionary<string, string> OpenAiSettings() => new()
+    {
+        { SettingKeys.Translation.OpenAi.Model, string.Empty },
+        { SettingKeys.Translation.OpenAi.RequestTemplate, string.Empty },
+        { SettingKeys.Translation.AiPrompt, "Translate from {sourceLanguage} to {targetLanguage}" },
+        { SettingKeys.Translation.AiUserPrompt, "{lineToTranslate}" },
+        { SettingKeys.Translation.AiMaxTokens, string.Empty },
+        { SettingKeys.Translation.ProofreadPrompt, string.Empty },
+        { SettingKeys.Translation.ProofreadUserPrompt, string.Empty },
+        { SettingKeys.Translation.RequestTimeout, "5" },
+        { SettingKeys.Translation.MaxRetries, "1" },
+        { SettingKeys.Translation.RetryDelay, "0" },
+        { SettingKeys.Translation.RetryDelayMultiplier, "1" },
+        { SettingKeys.Translation.LanguageCodeFormat, "false" }
+    };
+
+    private static Dictionary<string, string> CustomSettings(string model) => new()
+    {
+        { SettingKeys.Translation.Custom.Model, model },
+        { SettingKeys.Translation.Custom.Endpoint, "http://localhost:8000/v1" },
+        { SettingKeys.Translation.Custom.Protocol, string.Empty },
+        { SettingKeys.Translation.Custom.ChatRequestTemplate, string.Empty },
+        { SettingKeys.Translation.Custom.ResponsesRequestTemplate, string.Empty },
+        { SettingKeys.Translation.Custom.MessagesRequestTemplate, string.Empty },
+        { SettingKeys.Translation.Custom.AnthropicVersion, "2023-06-01" },
+        { SettingKeys.Translation.AiPrompt, "Translate from {sourceLanguage} to {targetLanguage}" },
+        { SettingKeys.Translation.AiUserPrompt, "{lineToTranslate}" },
+        { SettingKeys.Translation.AiMaxTokens, string.Empty },
+        { SettingKeys.Translation.AiThinking, string.Empty },
+        { SettingKeys.Translation.ProofreadPrompt, string.Empty },
+        { SettingKeys.Translation.ProofreadUserPrompt, string.Empty },
+        { SettingKeys.Translation.RequestTimeout, "5" },
+        { SettingKeys.Translation.MaxRetries, "1" },
+        { SettingKeys.Translation.RetryDelay, "0" },
+        { SettingKeys.Translation.RetryDelayMultiplier, "1" },
+        { SettingKeys.Translation.LanguageCodeFormat, "false" }
+    };
 
     #endregion
 

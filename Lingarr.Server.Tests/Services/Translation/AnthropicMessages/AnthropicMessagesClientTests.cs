@@ -277,6 +277,22 @@ public class AnthropicMessagesClientTests
         VerifyRequestsSent(1);
     }
 
+    [Fact]
+    public async Task CompleteBatchAsync_BadGateway_DoesNotFallBack()
+    {
+        SetupResponse(() => new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.BadGateway,
+            Content = new StringContent("{\"error\":\"bad gateway\"}", Encoding.UTF8, "application/json")
+        });
+
+        var exception = await Assert.ThrowsAsync<TranslationResponseException>(() => _client.CompleteBatchAsync(
+            Endpoint, "secret", "2023-06-01", _defaultTemplate, Replacements(), 0, strict: true, CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.BadGateway, exception.StatusCode);
+        VerifyRequestsSent(1);
+    }
+
     private Task<string> CompleteAsync(
         int maxTokens = 0,
         string? apiKey = "secret",

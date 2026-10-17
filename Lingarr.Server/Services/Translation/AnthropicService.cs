@@ -58,7 +58,8 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
     /// <param name="sourceLanguage">The source language code for translation</param>
     /// <param name="targetLanguage">The target language code for translation</param>
     /// <returns>A task that represents the asynchronous initialization operation</returns>
-    /// <exception cref="InvalidOperationException">Thrown when required configuration settings are missing or invalid</exception>
+    /// <exception cref="TranslationConfigurationException">Thrown when the API key or version is missing</exception>
+    /// <exception cref="TranslationException">Thrown when this candidate has no model</exception>
     private async Task InitializeAsync(string sourceLanguage, string targetLanguage)
     {
         if (_initialized) return;
@@ -90,9 +91,19 @@ public class AnthropicService : BaseLanguageService, ITranslationService, IBatch
                 ? settings[SettingKeys.Translation.Anthropic.RequestTemplate]
                 : _requestTemplateService.GetDefaultTemplate(SettingKeys.Translation.Anthropic.RequestTemplate);
 
-            if (string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_apiKey) || string.IsNullOrEmpty(_version))
+            if (string.IsNullOrWhiteSpace(_apiKey))
             {
-                throw new InvalidOperationException("Anthropic API key, model or version is not configured.");
+                throw new TranslationConfigurationException("Anthropic API key is not configured.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_version))
+            {
+                throw new TranslationConfigurationException("Anthropic version is not configured.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_model))
+            {
+                throw new TranslationException("Anthropic model is not configured.");
             }
 
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);

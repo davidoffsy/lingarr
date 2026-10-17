@@ -170,7 +170,9 @@ public static class BatchFillLoop
 
     /// <summary>
     /// Runs one half of a split. A translation failure (including a zero-hit) is returned
-    /// instead of thrown so the sibling half still runs. Cancellation is not swallowed.
+    /// instead of thrown so the sibling half still runs. Authentication and configuration
+    /// failures abort immediately: they apply to the whole provider, so the other half cannot
+    /// succeed. Cancellation is not swallowed.
     /// </summary>
     private static async Task<TranslationException?> FillHalf(
         IBatchTranslationService service,
@@ -198,6 +200,14 @@ public static class BatchFillLoop
             return null;
         }
         catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (TranslationAuthenticationException)
+        {
+            throw;
+        }
+        catch (TranslationConfigurationException)
         {
             throw;
         }

@@ -214,6 +214,78 @@ public class BatchFillLoopTests
     }
 
     [Fact]
+    public async Task FillAsync_AuthFailureOnLeftHalf_DoesNotRunRightHalf()
+    {
+        var calls = new List<List<int>>();
+        var mock = new Mock<IBatchTranslationService>();
+        mock.Setup(service => service.TranslateBatchAsync(
+                It.IsAny<List<BatchSubtitleItem>>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((List<BatchSubtitleItem> items, string _, string _, CancellationToken _) =>
+            {
+                calls.Add(items.Select(item => item.Position).ToList());
+                if (items.Count == 50)
+                {
+                    return Translations(items.Take(30));
+                }
+
+                throw new TranslationAuthenticationException("bad key");
+            });
+        var accumulated = new Dictionary<int, string>();
+
+        await Assert.ThrowsAsync<TranslationAuthenticationException>(() =>
+            BatchFillLoop.FillAsync(
+                mock.Object,
+                Items(50),
+                "en",
+                "es",
+                NullLogger.Instance,
+                CancellationToken.None,
+                accumulated));
+
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(Enumerable.Range(1, 50), calls[0]);
+        Assert.Equal(Enumerable.Range(31, 10), calls[1]);
+        Assert.Equal(30, accumulated.Count);
+    }
+
+    [Fact]
+    public async Task FillAsync_ConfigFailureOnLeftHalf_DoesNotRunRightHalf()
+    {
+        var calls = new List<List<int>>();
+        var mock = new Mock<IBatchTranslationService>();
+        mock.Setup(service => service.TranslateBatchAsync(
+                It.IsAny<List<BatchSubtitleItem>>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((List<BatchSubtitleItem> items, string _, string _, CancellationToken _) =>
+            {
+                calls.Add(items.Select(item => item.Position).ToList());
+                if (items.Count == 50)
+                {
+                    return Translations(items.Take(30));
+                }
+
+                throw new TranslationConfigurationException("missing endpoint");
+            });
+
+        await Assert.ThrowsAsync<TranslationConfigurationException>(() =>
+            BatchFillLoop.FillAsync(
+                mock.Object,
+                Items(50),
+                "en",
+                "es",
+                NullLogger.Instance,
+                CancellationToken.None));
+
+        Assert.Equal(2, calls.Count);
+        Assert.Equal(Enumerable.Range(31, 10), calls[1]);
+    }
+
+    [Fact]
     public async Task FillAsync_BlankReturnedValue_RetriesAsMiss()
     {
         var calls = new List<List<int>>();

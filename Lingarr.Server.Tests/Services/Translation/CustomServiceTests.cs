@@ -273,6 +273,33 @@ public class CustomServiceTests
         UseSettings(BaseEndpoint, model: string.Empty);
         SetupResponse(() => ChatResponse("Hola"));
 
+        // A missing model only fails this candidate; a later chain row may still carry an override.
+        var exception = await Assert.ThrowsAsync<TranslationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        Assert.IsType<TranslationException>(exception);
+        VerifyRequestsSent(0);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MissingModel_WithOverride_Translates()
+    {
+        UseSettings(BaseEndpoint, model: string.Empty);
+        _service.OverrideModel("override-model");
+        SetupResponse(() => ChatResponse("Hola"));
+
+        var result = await _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None);
+
+        Assert.Equal("Hola", result);
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_NonHttpEndpoint_ThrowsConfigurationException()
+    {
+        UseSettings("ftp://localhost:8000");
+        SetupResponse(() => ChatResponse("Hola"));
+
         await Assert.ThrowsAsync<TranslationConfigurationException>(
             () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
 
@@ -317,6 +344,25 @@ public class CustomServiceTests
         var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
 
         Assert.Equal("Hola", result[1]);
+        VerifyRequestsSent(2);
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_BadGateway_IsRetried()
+    {
+        UseSettings(BaseEndpoint);
+        SetupResponseSequence(
+            new HttpResponseMessage
+            {
+                StatusCode = HttpStatusCode.BadGateway,
+                Content = new StringContent("{\"error\":\"bad gateway\"}", Encoding.UTF8, "application/json")
+            },
+            ChatResponse("{\"translations\":" + ValidJson + "}"));
+
+        var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
+
+        Assert.Equal("Hola", result[1]);
+        // 502 is retryable: the same structured body is sent again, not a second JSON shape.
         VerifyRequestsSent(2);
     }
 

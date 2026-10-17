@@ -36,10 +36,14 @@ public static class HttpFailure
 
     /// <summary>
     /// True when the status code means "try again later" rather than "this request cannot succeed":
-    /// throttling and gateway unavailability.
+    /// throttling, request timeouts, and gateway failures.
     /// </summary>
     public static bool IsTransient(HttpStatusCode statusCode) =>
-        statusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable;
+        statusCode is HttpStatusCode.RequestTimeout
+            or HttpStatusCode.TooManyRequests
+            or HttpStatusCode.BadGateway
+            or HttpStatusCode.ServiceUnavailable
+            or HttpStatusCode.GatewayTimeout;
 
     /// <summary>
     /// Exception for a provider that rejected the request as unauthorized, for providers that keep

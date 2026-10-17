@@ -1,4 +1,5 @@
 using System;
+using Lingarr.Contracts.Exceptions;
 using Lingarr.Server.Services.Translation.OpenAiCompatible;
 using Xunit;
 
@@ -88,6 +89,46 @@ public class OpenAiCompatibleEndpointTests
     public void ResolveChatCompletionsUrl_Empty_Throws(string endpoint)
     {
         Assert.Throws<ArgumentException>(() => OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(endpoint));
+    }
+
+    [Theory]
+    [InlineData("ftp://localhost:8000")]
+    [InlineData("localhost:8000")]
+    [InlineData("not a url")]
+    [InlineData("file:///tmp/api")]
+    public void ResolveChatCompletionsUrl_NonHttp_ThrowsConfigurationException(string endpoint)
+    {
+        Assert.Throws<TranslationConfigurationException>(
+            () => OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(endpoint));
+    }
+
+    [Fact]
+    public void ResolveChatCompletionsUrl_PreservesQuery()
+    {
+        Assert.Equal(
+            "http://localhost:8000/v1/chat/completions?api-version=1",
+            OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(
+                "http://localhost:8000/v1/chat/completions?api-version=1"));
+        Assert.Equal(
+            "http://localhost:8000/v1/chat/completions?api-version=1",
+            OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl("http://localhost:8000/v1?api-version=1"));
+    }
+
+    [Fact]
+    public void ResolveChatCompletionsUrl_AzureDeploymentPath_IsPreserved()
+    {
+        const string azure =
+            "https://my.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-15-preview";
+
+        Assert.Equal(azure, OpenAiCompatibleEndpoint.ResolveChatCompletionsUrl(azure));
+    }
+
+    [Fact]
+    public void ResolveResponsesUrl_PreservesQuery()
+    {
+        Assert.Equal(
+            "http://localhost:8000/v1/responses?api-version=1",
+            OpenAiCompatibleEndpoint.ResolveResponsesUrl("http://localhost:8000/v1/responses?api-version=1"));
     }
 
     [Theory]

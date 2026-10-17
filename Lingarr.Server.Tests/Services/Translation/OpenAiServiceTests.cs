@@ -78,11 +78,55 @@ public class OpenAiServiceTests
         VerifyRequestsSent(2); // MaxRetries
     }
 
-    private void UseSettings(int maxRetries)
+    [Fact]
+    public async Task TranslateAsync_BadGateway_IsRetriedUntilRetriesAreExhausted()
+    {
+        UseSettings(maxRetries: 2);
+        SetupResponse(() => new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.BadGateway,
+            Content = new StringContent("{\"error\":\"bad gateway\"}")
+        });
+
+        var exception = await Assert.ThrowsAsync<TranslationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        Assert.Contains("Retry limit reached", exception.Message);
+        var inner = Assert.IsType<TranslationResponseException>(exception.InnerException);
+        Assert.Equal(HttpStatusCode.BadGateway, inner.StatusCode);
+        VerifyRequestsSent(2);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MissingApiKey_ThrowsConfigurationException()
+    {
+        _settingsMock.Setup(settingService => settingService.GetEncryptedSetting(It.IsAny<string>()))
+            .ReturnsAsync(string.Empty);
+        UseSettings(maxRetries: 1);
+
+        await Assert.ThrowsAsync<TranslationConfigurationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        VerifyRequestsSent(0);
+    }
+
+    [Fact]
+    public async Task TranslateAsync_MissingModel_ThrowsCandidateException()
+    {
+        UseSettings(maxRetries: 1, model: string.Empty);
+
+        var exception = await Assert.ThrowsAsync<TranslationException>(
+            () => _service.TranslateAsync("Hello", "en", "es", null, null, CancellationToken.None));
+
+        Assert.IsType<TranslationException>(exception);
+        VerifyRequestsSent(0);
+    }
+
+    private void UseSettings(int maxRetries, string model = "gpt-4o")
     {
         var settings = new Dictionary<string, string>
         {
-            { SettingKeys.Translation.OpenAi.Model, "gpt-4o" },
+            { SettingKeys.Translation.OpenAi.Model, model },
             { SettingKeys.Translation.OpenAi.ApiKey, "test-api-key" },
             { SettingKeys.Translation.OpenAi.RequestTemplate, "" },
             { SettingKeys.Translation.AiPrompt, "Translate from {sourceLanguage} to {targetLanguage}" },

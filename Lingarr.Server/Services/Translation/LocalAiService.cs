@@ -69,7 +69,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     /// <param name="sourceLanguage">The source language code for translation</param>
     /// <param name="targetLanguage">The target language code for translation</param>
     /// <returns>A task that represents the asynchronous initialization operation</returns>
-    /// <exception cref="InvalidOperationException">Thrown when required configuration settings are missing or invalid</exception>
+    /// <exception cref="TranslationConfigurationException">Thrown when the endpoint is missing or unusable</exception>
+    /// <exception cref="TranslationException">Thrown when this candidate has no model</exception>
     private async Task InitializeAsync(string sourceLanguage, string targetLanguage)
     {
         if (_initialized) return;
@@ -106,12 +107,18 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 ? settings[SettingKeys.Translation.LocalAi.GenerateRequestTemplate]
                 : _requestTemplateService.GetDefaultTemplate(SettingKeys.Translation.LocalAi.GenerateRequestTemplate);
 
-            if (string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_endpoint))
+            if (string.IsNullOrWhiteSpace(_endpoint))
             {
-                // Configuration failures are provider-wide: the chain skips the provider's remaining
-                // candidates instead of repeating the same broken request for every subtitle line.
+                // A missing endpoint is provider-wide: every model of this provider shares it.
                 throw new TranslationConfigurationException(
-                    "Local AI service requires both endpoint address and model name to be configured in settings.");
+                    "Local AI service requires an endpoint address to be configured in settings.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_model))
+            {
+                // A missing model only fails this candidate. A later row may carry an override.
+                throw new TranslationException(
+                    "Local AI service requires a model name to be configured in settings or on this candidate.");
             }
 
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);

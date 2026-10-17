@@ -133,12 +133,18 @@ public class CustomService : BaseLanguageService, ITranslationService, IBatchTra
                 ? settings[templateKey]
                 : _requestTemplateService.GetDefaultTemplate(templateKey);
 
-            if (string.IsNullOrEmpty(_model) || string.IsNullOrWhiteSpace(configuredEndpoint))
+            if (string.IsNullOrWhiteSpace(configuredEndpoint))
             {
-                // Configuration failures are provider-wide: the chain skips the provider's remaining
-                // candidates instead of repeating the same broken request for every subtitle line.
+                // A missing endpoint is provider-wide: every model of this provider shares it.
                 throw new TranslationConfigurationException(
-                    "Custom service requires both endpoint address and model name to be configured in settings.");
+                    "Custom service requires an endpoint address to be configured in settings.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_model))
+            {
+                // A missing model only fails this candidate. A later row may carry an override.
+                throw new TranslationException(
+                    "Custom service requires a model name to be configured in settings or on this candidate.");
             }
 
             // The protocol is configured explicitly, so only that protocol's path is built; known

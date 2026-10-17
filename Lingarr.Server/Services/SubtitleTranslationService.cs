@@ -322,7 +322,7 @@ public class SubtitleTranslationService
             catch (TranslationConfigurationException ex)
             {
                 MarkProviderUnusable(candidate, ex,
-                    "the candidate's settings cannot produce a request (missing endpoint, model or an unusable address).");
+                    "the candidate's settings cannot produce a request (missing endpoint, key or an unusable address).");
                 lastError = ex;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -427,7 +427,8 @@ public class SubtitleTranslationService
 
     /// <summary>
     /// Translates a batch of subtitles, walking batch-capable services in best-match order
-    /// and falling back on per-service failure.
+    /// and falling back on per-service failure. When every batch candidate is unusable or fails,
+    /// remaining lines are translated through the per-line chain instead of failing the file.
     /// </summary>
     public async Task<List<SubtitleItem>> ProcessSubtitleBatch(
         List<SubtitleItem> currentBatch,
@@ -494,7 +495,7 @@ public class SubtitleTranslationService
             catch (TranslationConfigurationException ex)
             {
                 MarkProviderUnusable(candidate, ex,
-                    "the candidate's settings cannot produce a request (missing endpoint, model or an unusable address).");
+                    "the candidate's settings cannot produce a request (missing endpoint, key or an unusable address).");
                 lastError = ex;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -508,13 +509,28 @@ public class SubtitleTranslationService
             }
         }
 
-        throw new TranslationException("All configured batch translation services failed.", lastError);
+        // Batch candidates are exhausted, but the chain may still have per-line fallbacks
+        // (or the same providers succeeding on a single-line request shape).
+        _logger.LogWarning(
+            lastError,
+            "All batch-capable translation candidates failed for {Source}->{Target}; falling back to line translation.",
+            sourceLanguage,
+            targetLanguage);
+        await TranslatePendingLinesAsync(
+            toTranslate,
+            sourceLanguage,
+            targetLanguage,
+            stripSubtitleFormatting,
+            preserveLineBreaks,
+            cancellationToken);
+        return toTranslate;
     }
 
     /// <summary>
     /// Translates the pending subtitles through the per-line chain and records their attribution.
     /// Used when batch translation was requested but no batch-capable candidate supports the language
-    /// pair, so the request degrades to line translation instead of failing.
+    /// pair, or every batch candidate failed, so the request degrades to line translation instead of
+    /// failing the whole file.
     /// </summary>
     private async Task TranslatePendingLinesAsync(
         List<SubtitleItem> toTranslate,

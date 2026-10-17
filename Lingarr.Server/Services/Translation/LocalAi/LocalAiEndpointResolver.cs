@@ -22,6 +22,7 @@ public static class LocalAiEndpointResolver
     public static LocalAiResolvedEndpoint ResolveCompletionEndpoint(string endpoint, LocalAiProtocol protocol)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
+        OpenAiCompatibleEndpoint.RequireHttpUrl(endpoint);
 
         var trimmed = TrimSlash(endpoint);
         return protocol switch
@@ -34,6 +35,9 @@ public static class LocalAiEndpointResolver
 
     public static string ResolveModelsUrl(string endpoint, LocalAiProtocol protocol)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
+        OpenAiCompatibleEndpoint.RequireHttpUrl(endpoint);
+
         var trimmed = TrimSlash(endpoint);
         var effective = protocol == LocalAiProtocol.Auto
             ? LooksLikeChatCompletions(trimmed)

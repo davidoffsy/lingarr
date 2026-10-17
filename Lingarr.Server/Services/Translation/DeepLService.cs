@@ -18,6 +18,7 @@ public class DeepLService : BaseTranslationService
 
     private ITranslator? _translator;
     private bool _initialized;
+    private bool _quotaAvailable;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
     /// <inheritdoc />
@@ -40,7 +41,7 @@ public class DeepLService : BaseTranslationService
     /// This method is thread-safe and ensures one-time initialization of service dependencies.
     /// </summary>
     /// <returns>A task that represents the asynchronous initialization operation</returns>
-    /// <exception cref="InvalidOperationException">Thrown when required configuration settings are missing or invalid</exception>
+    /// <exception cref="TranslationConfigurationException">Thrown when the API key is missing</exception>
     private async Task InitializeAsync()
     {
         if (_initialized) return;
@@ -59,7 +60,7 @@ public class DeepLService : BaseTranslationService
             var authKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.DeepL.DeeplApiKey);
             if (string.IsNullOrWhiteSpace(authKey))
             {
-                throw new InvalidOperationException("DeepL failed, please validate the API key.");
+                throw new TranslationConfigurationException("DeepL API key is not configured.");
             }
 
             _maxRetries = int.TryParse(settings[SettingKeys.Translation.MaxRetries], out var maxRetries) 
@@ -80,12 +81,6 @@ public class DeepLService : BaseTranslationService
                 MaximumNetworkRetries = 3,
                 PerRetryConnectionTimeout = TimeSpan.FromSeconds(10)
             });
-
-            var usage = await _translator.GetUsageAsync();
-            if (usage.AnyLimitReached)
-            {
-                throw new InvalidOperationException("Translation using DeepL failed, usage limit reached.");
-            }
 
             _initialized = true;
         }
@@ -146,6 +141,17 @@ public class DeepLService : BaseTranslationService
         if (_translator == null)
         {
             throw new TranslationException("DeepL translator was not properly initialized.");
+        }
+
+        if (!_quotaAvailable)
+        {
+            var usage = await _translator.GetUsageAsync();
+            if (usage.AnyLimitReached)
+            {
+                throw new TranslationException("Translation using DeepL failed, usage limit reached.");
+            }
+
+            _quotaAvailable = true;
         }
 
         var delay = _retryDelay;

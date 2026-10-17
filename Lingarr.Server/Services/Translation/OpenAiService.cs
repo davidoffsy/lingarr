@@ -56,7 +56,8 @@ public class OpenAiService : BaseLanguageService, ITranslationService, IBatchTra
     /// <param name="sourceLanguage">The source language code for translation</param>
     /// <param name="targetLanguage">The target language code for translation</param>
     /// <returns>A task that represents the asynchronous initialization operation</returns>
-    /// <exception cref="InvalidOperationException">Thrown when required configuration settings are missing or invalid</exception>
+    /// <exception cref="TranslationConfigurationException">Thrown when the API key is missing</exception>
+    /// <exception cref="TranslationException">Thrown when this candidate has no model</exception>
     private async Task InitializeAsync(string sourceLanguage, string targetLanguage)
     {
         if (_initialized) return;
@@ -87,9 +88,14 @@ public class OpenAiService : BaseLanguageService, ITranslationService, IBatchTra
                 ? settings[SettingKeys.Translation.OpenAi.RequestTemplate]
                 : _requestTemplateService.GetDefaultTemplate(SettingKeys.Translation.OpenAi.RequestTemplate);
 
-            if (string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_apiKey))
+            if (string.IsNullOrWhiteSpace(_apiKey))
             {
-                throw new InvalidOperationException("OpenAI API key or model is not configured.");
+                throw new TranslationConfigurationException("OpenAI API key is not configured.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_model))
+            {
+                throw new TranslationException("OpenAI model is not configured.");
             }
 
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);

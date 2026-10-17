@@ -56,7 +56,8 @@ public class MistralService : BaseLanguageService, ITranslationService, IBatchTr
     /// <param name="sourceLanguage">The source language code for translation</param>
     /// <param name="targetLanguage">The target language code for translation</param>
     /// <returns>A task that represents the asynchronous initialization operation</returns>
-    /// <exception cref="InvalidOperationException">Thrown when required configuration settings are missing or invalid</exception>
+    /// <exception cref="TranslationConfigurationException">Thrown when the API key is missing</exception>
+    /// <exception cref="TranslationException">Thrown when this candidate has no model</exception>
     private async Task InitializeAsync(string sourceLanguage, string targetLanguage)
     {
         if (_initialized) return;
@@ -87,9 +88,14 @@ public class MistralService : BaseLanguageService, ITranslationService, IBatchTr
                 ? settings[SettingKeys.Translation.Mistral.RequestTemplate]
                 : _requestTemplateService.GetDefaultTemplate(SettingKeys.Translation.Mistral.RequestTemplate);
 
-            if (string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_apiKey))
+            if (string.IsNullOrWhiteSpace(_apiKey))
             {
-                throw new InvalidOperationException("Mistral API key or model is not configured.");
+                throw new TranslationConfigurationException("Mistral API key is not configured.");
+            }
+
+            if (string.IsNullOrWhiteSpace(_model))
+            {
+                throw new TranslationException("Mistral model is not configured.");
             }
 
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);

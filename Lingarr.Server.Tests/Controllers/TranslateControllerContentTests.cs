@@ -608,7 +608,7 @@ public class TranslateControllerContentTests : IDisposable
     }
 
     [Fact]
-    public async Task TranslateContent_BatchServiceFails_ReturnsServerErrorAndMarksRequestFailed()
+    public async Task TranslateContent_BatchServiceFails_FallsBackToLineTranslation()
     {
         _batchTranslationServiceMock
             .Setup(batchService => batchService.TranslateBatchAsync(
@@ -622,13 +622,13 @@ public class TranslateControllerContentTests : IDisposable
             NewContent("First line", "Second line"),
             CancellationToken.None);
 
-        var errorResult = Assert.IsType<ObjectResult>(response.Result);
-        Assert.Equal(500, errorResult.StatusCode);
+        var results = AssertOk(response);
+        Assert.Equal(
+            ["line:First line", "line:Second line"],
+            results.OrderBy(result => result.Position).Select(result => result.Line));
 
         var translationRequest = await _context.TranslationRequests.SingleAsync();
-        Assert.Equal(TranslationStatus.Failed, translationRequest.Status);
-        Assert.NotNull(translationRequest.ErrorMessage);
-        Assert.NotNull(translationRequest.CompletedAt);
+        Assert.Equal(TranslationStatus.Completed, translationRequest.Status);
     }
 
     [Fact]

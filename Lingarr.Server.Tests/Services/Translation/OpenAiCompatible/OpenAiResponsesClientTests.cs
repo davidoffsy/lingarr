@@ -220,6 +220,21 @@ public class OpenAiResponsesClientTests
     }
 
     [Fact]
+    public async Task CompleteBatchAsync_BadGateway_IsNotRetriedAsFallback()
+    {
+        SetupResponse(() => new HttpResponseMessage
+        {
+            StatusCode = HttpStatusCode.BadGateway,
+            Content = new StringContent("{\"error\":\"bad gateway\"}", Encoding.UTF8, "application/json")
+        });
+
+        var exception = await Assert.ThrowsAsync<TranslationResponseException>(CompleteBatchAsync);
+
+        Assert.Equal(HttpStatusCode.BadGateway, exception.StatusCode);
+        VerifyRequestsSent(1);
+    }
+
+    [Fact]
     public async Task CompleteBatchAsync_StreamingTemplate_IsRejectedWithoutRequest()
     {
         const string streamingTemplate =
